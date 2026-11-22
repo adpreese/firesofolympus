@@ -9,10 +9,11 @@ func test_save_round_trip() -> void:
 	g.setup(["Ann", "Cpu"], [false, true], 1234)
 	for i in 20:
 		FoBot.step(g)
-	FoSave.write(g, 1, PATH)
+	FoSave.write(g, 1, [{}, {"level": FoBot.Level.HARD, "persona": "gambler"}], PATH)
 	var got := FoSave.read(data, PATH)
-	eq(got.size(), 2, "save read back")
-	if got.size() == 2:
+	eq(got.size(), 3, "save read back")
+	if got.size() == 3:
+		eq(got[2], [{}, {"level": FoBot.Level.HARD, "persona": "gambler"}], "CPU levels and personas")
 		var r: FoGame = got[0]
 		eq(r.log_lines, g.log_lines, "same game")
 		eq([r.players[0].name, r.players[0].is_bot, r.players[1].is_bot], ["Ann", false, true], "seats")
@@ -21,7 +22,7 @@ func test_save_round_trip() -> void:
 	eq(FoSave.read(data, PATH), [], "cleared")
 	while g.phase != FoGame.Phase.GAME_OVER:
 		FoBot.step(g)
-	FoSave.write(g, 0, PATH)
+	FoSave.write(g, 0, [], PATH)
 	eq(FoSave.read(data, PATH), [], "finished games are not resumable")
 	FoSave.clear(PATH)
 

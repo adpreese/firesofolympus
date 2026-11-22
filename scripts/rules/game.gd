@@ -50,6 +50,29 @@ class Player:
 		name = n
 		is_bot = bot
 
+	func copy() -> Player:
+		var p := Player.new(name, is_bot)
+		p.total = total
+		p.quest_scores = quest_scores.duplicate()
+		p.reserve = reserve.duplicate()
+		p.ap = ap
+		p.passed = passed
+		p.ingredients = ingredients.duplicate()
+		p.sharpen = sharpen
+		p.electrum_dice = electrum_dice
+		p.reaction_uses = reaction_uses.duplicate()
+		p.penalty = penalty.duplicate()
+		p.carry_raws = carry_raws.duplicate()
+		p.wager = wager
+		p.wager_decided = wager_decided
+		for d in dice:
+			var c := Die.new(d.raw, d.magic)
+			c.bonus = d.bonus
+			c.carried = d.carried
+			p.dice.append(c)
+		p.quest_score = quest_score
+		return p
+
 
 var data: CardData
 var rng := RandomNumberGenerator.new()
@@ -76,6 +99,8 @@ var history: Array = []
 ## whole game (see `replay`), which is how saves work.
 var moves: Array = []
 var seed_value := 0
+## Simulation copies (see `clone`) skip the log and results-screen bookkeeping.
+var quiet := false
 
 var _turn_step := -1
 var _challenge_pos := -1
@@ -262,7 +287,11 @@ func values(pi: int, kind: String) -> Array[int]:
 
 ## Strength: the penalty dict. Sharpness: {"successes": n}.
 func evaluate(pi: int, kind: String) -> Dictionary:
-	var vals := values(pi, kind)
+	return evaluate_values(pi, kind, values(pi, kind))
+
+
+## `evaluate` for final die values already worked out (lets callers try one die at a time).
+func evaluate_values(pi: int, kind: String, vals: Array) -> Dictionary:
 	var card := challenge_card(kind)
 	if kind == STRENGTH:
 		return Scoring.strength_penalty(card.name, vals)
@@ -303,18 +332,28 @@ func die_marks(pi: int, kind: String) -> Array[int]:
 
 ## Higher is better: Successes for Sharpness, minus penalty cost for Strength.
 func outcome_score(pi: int, kind: String) -> float:
-	var e := evaluate(pi, kind)
+	return outcome_of(pi, kind, values(pi, kind))
+
+
+func outcome_of(pi: int, kind: String, vals: Array) -> float:
+	var e := evaluate_values(pi, kind, vals)
 	return float(e.successes) if kind == SHARPNESS else -Scoring.penalty_cost(e)
 
 
-func expected_after_reroll(pi: int, die_idx: int, kind: String) -> float:
+## Average outcome_score if this die were rerolled. `vals`: current values(pi, kind), if known.
+func expected_after_reroll(pi: int, die_idx: int, kind: String, vals: Array = []) -> float:
+	if vals.is_empty():
+		vals = values(pi, kind)
 	var d: Die = players[pi].dice[die_idx]
 	var old := d.raw
+	var old_val: int = vals[die_idx]
 	var total := 0.0
 	for r in range(1, 7):
 		d.raw = r
-		total += outcome_score(pi, kind)
+		vals[die_idx] = die_value(pi, d, kind)
+		total += outcome_of(pi, kind, vals)
 	d.raw = old
+	vals[die_idx] = old_val
 	return total / 6.0
 
 
@@ -374,6 +413,41 @@ func winners() -> Array[int]:
 		if players[i].total == best:
 			out.append(i)
 	return out
+
+
+# ------------------------------------------------------------------ copies
+
+## An independent copy for look-ahead (FoBot's Hard level). Shares the read-only card data;
+## the copy is `quiet` and starts with an empty log. Its rng starts in the same state, so
+## reseed it unless you want the real future dice.
+func clone() -> FoGame:
+	var g := FoGame.new(data)
+	g.quiet = true
+	g.rng.seed = rng.seed
+	g.rng.state = rng.state
+	for p in players:
+		g.players.append(p.copy())
+	g.quest = quest
+	g.phase = phase
+	g.current = current
+	g.order = order.duplicate()
+	g.market = market.duplicate()
+	g.deck = deck.duplicate()
+	g.discard = discard.duplicate()
+	g.strength_deck = strength_deck.duplicate()
+	g.sharpness_deck = sharpness_deck.duplicate()
+	g.strength_card = strength_card
+	g.sharpness_card = sharpness_card
+	g.challenge_kind = challenge_kind
+	g.history = history.duplicate()
+	g.moves = moves.duplicate()
+	g.seed_value = seed_value
+	g._turn_step = _turn_step
+	g._challenge_pos = _challenge_pos
+	g._reserve_pos = _reserve_pos
+	g._pending_bauble_id = _pending_bauble_id
+	g._result = _result.duplicate(true)
+	return g
 
 
 # ------------------------------------------------------------------ moves & replay
@@ -647,6 +721,8 @@ func _open_result(kind: String) -> void:
 
 
 func _record_row(pi: int, e: Dictionary) -> void:
+	if quiet:
+		return
 	var p: Player = players[pi]
 	var vals := values(pi, challenge_kind)
 	var marks := die_marks(pi, challenge_kind)
@@ -873,4 +949,6 @@ func _d6() -> int:
 
 
 func _log(s: String) -> void:
+	if quiet:
+		return
 	log_lines.append(s)

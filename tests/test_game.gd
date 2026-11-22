@@ -273,3 +273,22 @@ func test_replay_rejects_bad_moves() -> void:
 	ok(FoGame.replay(data, ["a", "b"], [true, true], 7, [["nonsense"]]) == null, "unknown move")
 	ok(FoGame.replay(data, ["a", "b"], [true, true], 7, ["draft"]) == null, "malformed move")
 	ok(g.moves.is_empty(), "no moves before anyone acts")
+
+
+## A clone with the same rng state plays out exactly like the original, and changing the
+## clone never touches the original.
+func test_clone_is_independent() -> void:
+	for s in 20:
+		var g := _new_game(2 + s % 3, 900 + s)
+		for i in 15 + s * 9:
+			if g.phase == FoGame.Phase.GAME_OVER:
+				break
+			FoBot.step(g)
+		var before := g.log_lines.duplicate()
+		var state := g.rng.state
+		var c := g.clone()
+		_play_out(c)
+		eq(g.log_lines, before, "seed %d: original untouched" % s)
+		eq(g.rng.state, state, "seed %d: original rng untouched" % s)
+		_play_out(g)
+		eq(c.players.map(func(p): return p.total), g.players.map(func(p): return p.total), "seed %d: same result" % s)

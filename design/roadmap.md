@@ -32,11 +32,15 @@ online multiplayer, and character portraits.
       human decision of a hotseat game, new or resumed.
 
 ## Milestone 4: CPU opponents
-- [ ] Difficulty levels: Easy (noisy heuristic), Normal (current bot), Hard (Monte Carlo lookahead
+- [x] Difficulty levels: Easy (noisy heuristic), Normal (current bot), Hard (Monte Carlo lookahead
       using the deterministic engine on a cloned state). Must not consume the game's `rng`.
-- [ ] Personalities: named rival blacksmiths with a one-line description and a play-style bias
+      Hard simulates the rest of the Quest 6 times per candidate move (top 4 drafts + sharpen + pass);
+      about 80 ms per decision on desktop, spread over frames (`FoBot.Plan`) so the UI never stalls.
+- [x] Personalities: named rival blacksmiths with a one-line description and a play-style bias
       (e.g. aggressive sharpener, gambler, hoarder). Names and text only, no portraits yet.
-- [ ] Bot-vs-bot test: Hard beats Normal beats Easy over N seeded games.
+      Kallisto (steady), Brontes (sharpener), Tycho (gambler), Melaina (hoarder), Phaedra (monster hunter).
+- [x] Bot-vs-bot test: Hard beats Normal beats Easy over N seeded games (`tests/test_bot.gd`).
+      Measured over 2-player games: Normal beats Easy ~65%, Hard beats Normal ~95%.
 
 ## Milestone 5: Platform & accessibility
 - [ ] iOS: safe areas, touch-sized targets (≥ 44 pt), haptics on roll/draft, app icon and launch screen.

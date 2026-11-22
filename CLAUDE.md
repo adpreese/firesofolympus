@@ -29,7 +29,9 @@ Targets: Web (primary for playtesting) and iOS. Landscape 1920x1080 base, `canva
   - `card_data.gd` (CardData): loads CSVs; `DEFS` holds each Ingredient's behaviour. Tests fail if CSV and DEFS disagree.
   - `scoring.gd` (Scoring): Challenge card rules (Successes / penalties) on final die values
   - `game.gd` (FoGame): seeded state machine. Read `phase` + `current`, call `act_*` / `apply_reaction` / `finish_reactions`.
-  - `bot.gd` (FoBot): heuristic player, one decision per `step()`
+  - `bot.gd` (FoBot): CPU players. Levels Easy / Normal / Hard and named personas (`PERSONAS`, a bias on the
+    heuristic). `step()` makes one decision; the UI uses `plan()` + `Plan.advance(ms)` so Hard's look-ahead
+    (rollouts on `FoGame.clone()` with reseeded dice) is spread over frames. Never draws from `g.rng`.
 - `scripts/main.gd` — pass-and-play UI built in code; only reads FoGame state and forwards clicks
   (sounds fire by diffing FoGame state between redraws, so CPU moves are audible too)
   Results screens come from `FoGame.history`; CPU turns wait while an overlay (results, zoom, menu, hand-off) is open.

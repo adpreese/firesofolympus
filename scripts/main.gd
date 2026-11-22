@@ -20,9 +20,12 @@ var data: CardData
 var game: FoGame
 var selected_reaction := ""
 var bot_wait := 0.0
+var cpu: Array = []            # per seat: {} for a human, {level, persona} for a CPU
+var bot_plan: FoBot.Plan       # the CPU decision being thought about
+const THINK_MS := 10.0         # Hard CPUs think this long per frame so the UI stays smooth
 var autoplay := "--autoplay" in OS.get_cmdline_user_args()
 
-var seat_rows: Array = []  # [row, LineEdit, CheckBox]
+var seat_rows: Array = []  # [seat box, name LineEdit, CPU CheckBox, persona OptionButton, level OptionButton, blurb Label]
 var count_spin: SpinBox
 var players_box: VBoxContainer
 var header: VBoxContainer
@@ -99,11 +102,16 @@ func _process(delta: float) -> void:
 		_tumble(delta)
 	if game == null or game.phase == FoGame.Phase.GAME_OVER or not game.player().is_bot or _busy():
 		return
+	if bot_plan == null or bot_plan.g != game or bot_plan.stale() or bot_plan.pi != game.current:
+		var c: Dictionary = cpu[game.current] if game.current < cpu.size() else {}
+		bot_plan = FoBot.plan(game, c.get("level", FoBot.Level.NORMAL), c.get("persona", ""))
+	var decided := bot_plan.advance(INF if autoplay else THINK_MS)
 	bot_wait -= delta
-	if bot_wait > 0:
+	if bot_wait > 0 or not decided:
 		return
 	bot_wait = 0.0 if autoplay else FoSettings.cpu_delay()
-	FoBot.step(game)
+	game.play_move(bot_plan.move)
+	bot_plan = null
 	_refresh()
 
 
@@ -135,7 +143,7 @@ func _show_setup() -> void:
 	box.add_child(sub)
 	if not resume.is_empty():
 		var g: FoGame = resume[0]
-		var cont := _title_button("Continue", func(): _enter_game(resume[0], resume[1]))
+		var cont := _title_button("Continue", func(): _enter_game(resume[0], resume[1], resume[2]))
 		cont.add_theme_stylebox_override("normal", FoUI.box(FoUI.PANEL_LIGHT, FoUI.GOLD, 2, 8, 10))
 		cont.add_theme_color_override("font_color", FoUI.GOLD)
 		box.add_child(cont)
@@ -160,18 +168,37 @@ func _show_setup() -> void:
 	box.add_child(row)
 	seat_rows.clear()
 	for i in MAX_PLAYERS:
+		var seat := VBoxContainer.new()
+		seat.add_theme_constant_override("separation", 2)
 		var r := HBoxContainer.new()
-		r.add_theme_constant_override("separation", 16)
+		r.add_theme_constant_override("separation", 12)
 		var name_edit := LineEdit.new()
-		name_edit.text = DEFAULT_NAMES[i]
-		name_edit.custom_minimum_size.x = 360
-		var cpu := CheckBox.new()
-		cpu.text = "CPU"
-		cpu.button_pressed = i > 0
+		name_edit.custom_minimum_size.x = 300
+		var is_cpu := CheckBox.new()
+		is_cpu.text = "CPU"
+		var persona := OptionButton.new()
+		for pd in FoBot.PERSONAS:
+			persona.add_item(pd.name)
+		persona.select(i % FoBot.PERSONAS.size())
+		persona.custom_minimum_size.x = 190
+		var level := OptionButton.new()
+		for l in FoBot.LEVELS:
+			level.add_item(l)
+		level.select(FoBot.Level.NORMAL)
+		level.custom_minimum_size.x = 150
+		var blurb := FoUI.label("", 16, FoUI.MUTED, false)
 		r.add_child(name_edit)
-		r.add_child(cpu)
-		box.add_child(r)
-		seat_rows.append([r, name_edit, cpu])
+		r.add_child(is_cpu)
+		r.add_child(persona)
+		r.add_child(level)
+		seat.add_child(r)
+		seat.add_child(blurb)
+		box.add_child(seat)
+		seat_rows.append([seat, name_edit, is_cpu, persona, level, blurb])
+		is_cpu.button_pressed = i > 0
+		is_cpu.toggled.connect(func(_on): _update_seat(i, true))
+		persona.item_selected.connect(func(_idx): _update_seat(i, true))
+		_update_seat(i, true)
 	var options := HBoxContainer.new()
 	options.add_theme_constant_override("separation", 12)
 	options.add_child(_button("Settings", func(): _open_menu("settings")))
@@ -199,26 +226,52 @@ func _update_seats() -> void:
 		seat_rows[i][0].visible = i < int(count_spin.value)
 
 
+## Show or hide a seat's CPU options. rename: swap a default name for the persona's name (or back).
+func _update_seat(i: int, rename: bool) -> void:
+	var row: Array = seat_rows[i]
+	var on: bool = row[2].button_pressed
+	var pd: Dictionary = FoBot.PERSONAS[row[3].selected]
+	row[3].visible = on
+	row[4].visible = on
+	row[5].visible = on
+	row[5].text = pd.blurb
+	var current: String = row[1].text.strip_edges()
+	var defaults: Array = DEFAULT_NAMES + FoBot.PERSONAS.map(func(x): return x.name)
+	if rename and (current == "" or current in defaults):
+		row[1].text = pd.name if on else DEFAULT_NAMES[i]
+
+
 func _start_game() -> void:
 	var names := []
 	var bots := []
+	var cpus := []
 	for i in int(count_spin.value):
-		var n: String = seat_rows[i][1].text.strip_edges()
+		var row: Array = seat_rows[i]
+		var n: String = row[1].text.strip_edges()
 		names.append(n if n != "" else "Player %d" % (i + 1))
-		bots.append(seat_rows[i][2].button_pressed)
-	_new_game(names, bots)
+		bots.append(row[2].button_pressed)
+		cpus.append({"level": row[4].selected, "persona": FoBot.PERSONAS[row[3].selected].key} if row[2].button_pressed else {})
+	_new_game(names, bots, cpus)
 
 
-func _new_game(names: Array, bots: Array) -> void:
+func _new_game(names: Array, bots: Array, cpus: Array) -> void:
 	var g := FoGame.new(data)
 	g.setup(names, bots, randi())
-	_enter_game(g, 0)
+	_enter_game(g, 0, cpus)
 	_play("start")
 
 
 ## Show `g` on the board. `seen`: history entries already dismissed (from a save).
-func _enter_game(g: FoGame, seen: int) -> void:
+## `cpus`: per seat {level, persona} for CPUs; missing entries play at Normal.
+func _enter_game(g: FoGame, seen: int, cpus: Array = []) -> void:
 	game = g
+	cpu = []
+	for i in g.players.size():
+		var c: Dictionary = cpus[i] if i < cpus.size() and cpus[i] is Dictionary else {}
+		if g.players[i].is_bot and c.is_empty():
+			c = {"level": FoBot.Level.NORMAL, "persona": ""}
+		cpu.append(c if g.players[i].is_bot else {})
+	bot_plan = null
 	resume = []
 	last_snap = {}
 	results_queue.clear()
@@ -407,7 +460,11 @@ func _player_mat(pi: int) -> Control:
 	name_label.clip_text = true
 	top.add_child(name_label)
 	if p.is_bot:
-		top.add_child(FoUI.chip("CPU", FoUI.MUTED, 14))
+		var c: Dictionary = cpu[pi] if pi < cpu.size() else {}
+		var chip := FoUI.chip("CPU · %s" % FoBot.LEVELS[c.get("level", FoBot.Level.NORMAL)], FoUI.MUTED, 14)
+		if c.get("persona", "") != "":
+			chip.tooltip_text = FoBot.persona(c.persona).blurb
+		top.add_child(chip)
 	top.add_child(FoUI.heading(FoGame.successes_text(p.total), 20, FoUI.GOLD, false))
 	v.add_child(top)
 
@@ -894,7 +951,7 @@ func _autosave() -> void:
 	if game.phase == FoGame.Phase.GAME_OVER:
 		FoSave.clear()
 	else:
-		FoSave.write(game, state[1])
+		FoSave.write(game, state[1], cpu)
 
 
 ## Hotseat: when a decision moves to a different human, cover the board until they're ready.
@@ -1015,7 +1072,7 @@ func _restart_panel() -> Control:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 14)
 	row.add_child(_big_button("Restart", func():
-		_new_game(game.players.map(func(p): return p.name), game.players.map(func(p): return p.is_bot))))
+		_new_game(game.players.map(func(p): return p.name), game.players.map(func(p): return p.is_bot), cpu)))
 	row.add_child(_big_button("Cancel", func(): _open_menu("pause")))
 	box.add_child(row)
 	return pb[0]
@@ -1098,12 +1155,15 @@ func _apply_text_size() -> void:
 	var page := menu
 	var back := menu_back
 	var count := count_spin.value
-	var seats := seat_rows.map(func(r): return [r[1].text, r[2].button_pressed])
+	var seats := seat_rows.map(func(r): return [r[1].text, r[2].button_pressed, r[3].selected, r[4].selected])
 	_show_setup()
 	count_spin.value = count
 	for i in seats.size():
-		seat_rows[i][1].text = seats[i][0]
 		seat_rows[i][2].button_pressed = seats[i][1]
+		seat_rows[i][3].select(seats[i][2])
+		seat_rows[i][4].select(seats[i][3])
+		_update_seat(i, false)
+		seat_rows[i][1].text = seats[i][0]
 	menu = page
 	menu_back = back
 	_render_overlay()

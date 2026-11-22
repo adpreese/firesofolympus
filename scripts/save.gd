@@ -9,7 +9,8 @@ const FORMAT := 1
 
 
 ## `seen`: how many FoGame.history entries the players have already dismissed.
-static func write(g: FoGame, seen: int, path := PATH) -> void:
+## `cpu`: per seat {level, persona} for CPU players ({} for humans).
+static func write(g: FoGame, seen: int, cpu: Array = [], path := PATH) -> void:
 	var d := {
 		"format": FORMAT,
 		"version": ProjectSettings.get_setting("application/config/version", ""),
@@ -18,6 +19,7 @@ static func write(g: FoGame, seen: int, path := PATH) -> void:
 		"seed": g.seed_value,
 		"moves": g.moves,
 		"seen": seen,
+		"cpu": cpu,
 	}
 	var f := FileAccess.open(path, FileAccess.WRITE)
 	if f == null:
@@ -27,7 +29,7 @@ static func write(g: FoGame, seen: int, path := PATH) -> void:
 	f.close()
 
 
-## [FoGame, seen] for the saved game, or [] if there is no usable save.
+## [FoGame, seen, cpu] for the saved game, or [] if there is no usable save.
 static func read(data: CardData, path := PATH) -> Array:
 	if not FileAccess.file_exists(path):
 		return []
@@ -47,7 +49,18 @@ static func read(data: CardData, path := PATH) -> Array:
 	var g := FoGame.replay(data, names, bots, int(d.get("seed", 0)), d.moves)
 	if g == null or g.phase == FoGame.Phase.GAME_OVER:
 		return []
-	return [g, clampi(int(d.get("seen", 0)), 0, g.history.size())]
+	var cpu := []
+	var saved_cpu = d.get("cpu", [])
+	for i in names.size():
+		var c = saved_cpu[i] if saved_cpu is Array and i < saved_cpu.size() else null
+		if not bots[i]:
+			cpu.append({})
+		elif c is Dictionary:
+			cpu.append({"level": clampi(int(c.get("level", FoBot.Level.NORMAL)), 0, FoBot.LEVELS.size() - 1),
+				"persona": str(c.get("persona", ""))})
+		else:
+			cpu.append({"level": FoBot.Level.NORMAL, "persona": ""})
+	return [g, clampi(int(d.get("seen", 0)), 0, g.history.size()), cpu]
 
 
 static func clear(path := PATH) -> void:
