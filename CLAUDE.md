@@ -23,12 +23,17 @@ Targets: Web (primary for playtesting) and iOS. Landscape 1920x1080 base, `canva
 ## Layout
 - `design/rules.md` — the designer's rules; `design/rules_interpretations.md` — how ambiguous rules are implemented (keep in sync with code)
 - `data/*.csv` — card text exported from the design spreadsheet (imported as "keep" files so they ship as-is)
+- `assets/` — art, audio, fonts copied from the earlier React Native prototype (`foo-native-web-test`)
 - `scripts/rules/` — pure rules engine, no Nodes:
   - `card_data.gd` (CardData): loads CSVs; `DEFS` holds each Ingredient's behaviour. Tests fail if CSV and DEFS disagree.
   - `scoring.gd` (Scoring): Challenge card rules (Successes / penalties) on final die values
   - `game.gd` (FoGame): seeded state machine. Read `phase` + `current`, call `act_*` / `apply_reaction` / `finish_reactions`.
   - `bot.gd` (FoBot): heuristic player, one decision per `step()`
 - `scripts/main.gd` — minimal pass-and-play UI built in code; only reads FoGame state and forwards clicks
+  (sounds fire by diffing FoGame state between redraws, so CPU moves are audible too)
+- `scripts/assets.gd` (FoAssets) — maps CSV art names / card names / game events to files in `assets/`
+  (`ART_ALIASES` for renamed images, `MISSING_ART` for cards with no image yet, `INGREDIENT_SOUNDS`, `SFX`).
+  Pixel art is nearest-upscaled at load. Web export excludes the duplicate music `.ogg`.
 - `tests/` — tiny built-in runner (`run_tests.gd`), no addons
 
 ## Conventions

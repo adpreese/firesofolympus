@@ -2,10 +2,20 @@ extends Control
 ## Minimal pass-and-play UI. All rules live in FoGame; this only draws state and
 ## forwards clicks. CPU seats are driven by FoBot, one decision every bot_delay seconds.
 ## Smoke test: `godot -- --autoplay` plays an all-CPU game at full speed and quits.
+## Art, fonts and sounds come from FoAssets; sounds are triggered by diffing game state
+## between redraws, so CPU moves make the same noises as human ones.
 
 const BOT_DELAY := 0.45
 const MAX_PLAYERS := 4
 const DEFAULT_NAMES := ["Andrea", "Bob", "Carlos", "Dhivya"]
+const SFX_VOICES := 8
+const MUSIC_DB := -14.0
+const HEADING_FONT := "Cinzel-Bold.ttf"
+const BODY_FONT := "SourceSerif4-Regular.ttf"
+const GOLD := Color(1.0, 0.75, 0.35)
+
+static var sound_on := true
+static var music_on := true
 
 var data: CardData
 var game: FoGame
@@ -17,15 +27,25 @@ var autoplay := "--autoplay" in OS.get_cmdline_user_args()
 var seat_rows: Array = []  # [row, LineEdit, CheckBox]
 var count_spin: SpinBox
 var players_box: VBoxContainer
-var header: Label
+var header: VBoxContainer
 var action_box: VBoxContainer
 var log_view: RichTextLabel
+var heading_font: Font
+var audio_root: Node  # survives _clear(self) so music keeps playing across screens
+var music: AudioStreamPlayer
+var sfx: Array[AudioStreamPlayer] = []
+var sfx_next := 0
+var last_snap := {}
+var quitting := false
 
 
 func _ready() -> void:
 	var t := Theme.new()
 	t.default_font_size = 22
+	t.default_font = FoAssets.font(BODY_FONT)
 	theme = t
+	heading_font = FoAssets.font(HEADING_FONT)
+	_setup_audio()
 	data = CardData.load_default()
 	_show_setup()
 	if autoplay:
@@ -36,10 +56,26 @@ func _ready() -> void:
 		_start_game()
 
 
+func _exit_tree() -> void:
+	_stop_audio()
+
+
+func _stop_audio() -> void:
+	for p in sfx + ([music] if music != null else []):
+		p.stop()
+		p.stream = null
+	FoAssets.clear_cache()
+
+
 func _process(delta: float) -> void:
 	if autoplay and game != null and game.phase == FoGame.Phase.GAME_OVER:
-		print(game.log_lines[-1])
-		get_tree().quit()
+		if not quitting:
+			quitting = true
+			print(game.log_lines[-1])
+			_stop_audio()
+			# the AudioServer frees stopped playbacks on its next mix, so give it a moment
+			await get_tree().create_timer(0.2).timeout
+			get_tree().quit()
 		return
 	if game == null or game.phase == FoGame.Phase.GAME_OVER or not game.player().is_bot:
 		return
@@ -63,7 +99,7 @@ func _show_setup() -> void:
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 14)
 	center.add_child(box)
-	box.add_child(_label("Fires of Olympus", 56))
+	box.add_child(_heading("Fires of Olympus", 64))
 	if not data.errors.is_empty():
 		box.add_child(_label("Card data problems:\n" + "\n".join(data.errors), 18))
 	var row := HBoxContainer.new()
@@ -88,6 +124,12 @@ func _show_setup() -> void:
 		r.add_child(cpu)
 		box.add_child(r)
 		seat_rows.append([r, name_edit, cpu])
+	var audio_row := HBoxContainer.new()
+	audio_row.add_child(_toggle("Sound effects", sound_on, func(on): sound_on = on))
+	audio_row.add_child(_toggle("Music", music_on, func(on):
+		music_on = on
+		_update_music()))
+	box.add_child(audio_row)
 	box.add_child(_button("Start", _start_game))
 	_update_seats()
 
@@ -106,6 +148,8 @@ func _start_game() -> void:
 		bots.append(seat_rows[i][2].button_pressed)
 	game = FoGame.new(data)
 	game.setup(names, bots, randi())
+	last_snap = {}
+	_play("start")
 	_build_board()
 
 
@@ -133,7 +177,7 @@ func _build_board() -> void:
 
 	var mid := VBoxContainer.new()
 	mid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	header = _label("")
+	header = VBoxContainer.new()
 	mid.add_child(header)
 	mid.add_child(HSeparator.new())
 	var scroll := ScrollContainer.new()
@@ -157,6 +201,7 @@ func _build_board() -> void:
 func _refresh() -> void:
 	if game == null or action_box == null:
 		return
+	_play_events()
 	_render_players()
 	_render_header()
 	_render_actions()
@@ -164,10 +209,41 @@ func _refresh() -> void:
 
 
 func _render_header() -> void:
-	var s: Dictionary = game.strength_card
-	var h: Dictionary = game.sharpness_card
-	header.text = "Quest %d of 3\nStrength: %s (%s) - %s\nSharpness: %s (%s) - %s" % [
-		mini(game.quest + 1, 3), s.name, s.type, s.rule, h.name, h.type, h.rule]
+	_clear(header)
+	header.add_child(_heading("Quest %d of 3" % mini(game.quest + 1, 3), 30))
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 16)
+	for kind in [FoGame.STRENGTH, FoGame.SHARPNESS]:
+		var active: bool = game.phase == FoGame.Phase.REACT and game.challenge_kind == kind
+		row.add_child(_challenge_panel(game.challenge_card(kind), active))
+	header.add_child(row)
+
+
+func _challenge_panel(card: Dictionary, active: bool) -> Control:
+	var panel := PanelContainer.new()
+	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.16, 0.12, 0.18)
+	style.border_color = GOLD if active else Color(0.35, 0.3, 0.38)
+	style.set_border_width_all(3 if active else 1)
+	style.set_corner_radius_all(8)
+	style.set_content_margin_all(10)
+	panel.add_theme_stylebox_override("panel", style)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 12)
+	panel.add_child(row)
+	var tex := FoAssets.challenge_art(card)
+	if tex != null:
+		row.add_child(_picture(tex, 120))
+	var text := VBoxContainer.new()
+	text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var title := _heading("%s: %s" % [card.kind, card.name], 22)
+	if active:
+		title.add_theme_color_override("font_color", GOLD)
+	text.add_child(title)
+	text.add_child(_label("%s\n%s" % [card.type, card.rule], 17))
+	row.add_child(text)
+	return panel
 
 
 func _render_players() -> void:
@@ -187,8 +263,17 @@ func _render_players() -> void:
 			lines.append("Penalty: " + Scoring.describe_penalty(p.penalty))
 		var l := _label("\n".join(lines), 19)
 		if marker != "":
-			l.add_theme_color_override("font_color", Color(1.0, 0.75, 0.35))
+			l.add_theme_color_override("font_color", GOLD)
 		players_box.add_child(l)
+		var icons := HFlowContainer.new()
+		players_box.add_child(icons)
+		for c in p.ingredients + p.reserve:
+			var tex := FoAssets.ingredient_art(data.ingredient(c.name))
+			if tex != null:
+				var pic := _picture(tex, 44)
+				pic.tooltip_text = c.name
+				pic.mouse_filter = Control.MOUSE_FILTER_PASS
+				icons.add_child(pic)
 		players_box.add_child(HSeparator.new())
 
 
@@ -323,16 +408,52 @@ func _act(f: Callable) -> void:
 		_refresh()).call_deferred()
 
 
-func _button(text: String, f: Callable) -> Button:
+## click_sound: off for buttons whose action has its own sound (drafting a card).
+func _button(text: String, f: Callable, click_sound := true) -> Button:
 	var b := Button.new()
 	b.text = text
-	b.pressed.connect(func(): _act(f))
+	b.pressed.connect(func():
+		if click_sound:
+			_play("click")
+		_act(f))
 	return b
 
 
+func _toggle(text: String, on: bool, f: Callable) -> CheckButton:
+	var b := CheckButton.new()
+	b.text = text
+	b.button_pressed = on
+	b.toggled.connect(func(v):
+		f.call(v)
+		_play("toggle"))
+	return b
+
+
+func _heading(text: String, size := 28) -> Label:
+	var l := _label(text, size)
+	if heading_font != null:
+		l.add_theme_font_override("font", heading_font)
+	return l
+
+
+func _picture(tex: Texture2D, size: float) -> TextureRect:
+	var r := TextureRect.new()
+	r.texture = tex
+	r.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	r.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	r.custom_minimum_size = Vector2(size, size)
+	return r
+
+
 func _card_button(card: Dictionary, f: Callable, prefix := "") -> Button:
-	var b := _button("%s%s\n%s" % [prefix, card.name, game.text_of(card)], f)
+	var b := _button("%s%s\n%s" % [prefix, card.name, game.text_of(card)], f, false)
 	b.custom_minimum_size = Vector2(300, 130)
+	var tex := FoAssets.ingredient_art(data.ingredient(card.name))
+	if tex != null:
+		b.icon = tex
+		b.expand_icon = true
+		b.add_theme_constant_override("icon_max_width", 96)
+		b.add_theme_constant_override("h_separation", 10)
 	b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	b.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	b.add_theme_font_size_override("font_size", 18)
@@ -360,5 +481,97 @@ func _names(cards: Array) -> String:
 
 func _clear(n: Node) -> void:
 	for c in n.get_children():
+		if c == audio_root:
+			continue
 		n.remove_child(c)
 		c.queue_free()
+
+
+# ------------------------------------------------------------------ audio
+
+func _setup_audio() -> void:
+	audio_root = Node.new()
+	audio_root.name = "Audio"
+	add_child(audio_root)
+	for i in SFX_VOICES:
+		var p := AudioStreamPlayer.new()
+		audio_root.add_child(p)
+		sfx.append(p)
+	music = AudioStreamPlayer.new()
+	var m := FoAssets.stream(FoAssets.MUSIC)
+	if m is AudioStreamMP3:
+		m.loop = true
+	music.stream = m
+	music.volume_db = MUSIC_DB
+	audio_root.add_child(music)
+	_update_music()
+
+
+func _update_music() -> void:
+	if music == null or music.stream == null:
+		return
+	if music_on and not music.playing:
+		music.play()
+	elif not music_on:
+		music.stop()
+
+
+func _play(event: String) -> void:
+	_play_file(FoAssets.sfx_path(event), FoAssets.SFX[event][1])
+
+
+func _play_file(path: String, volume := 0.5) -> void:
+	if not sound_on or sfx.is_empty() or not is_inside_tree():
+		return
+	var s := FoAssets.stream(path)
+	if s == null:
+		return
+	var p := sfx[sfx_next]
+	sfx_next = (sfx_next + 1) % sfx.size()
+	p.stream = s
+	p.volume_db = linear_to_db(volume)
+	p.play()
+
+
+## What changed since the last redraw, reduced to the things that make a sound.
+func _snapshot() -> Dictionary:
+	var snap := {
+		"phase": game.phase, "quest": game.quest, "current": game.current,
+		"kind": game.challenge_kind, "ingredients": [], "sharpen": [], "reserve": [], "dice": "",
+	}
+	for p in game.players:
+		snap.ingredients.append(p.ingredients.map(func(c): return c.name))
+		snap.sharpen.append(p.sharpen)
+		snap.reserve.append(p.reserve.size())
+	if game.phase == FoGame.Phase.REACT:
+		snap.dice = str(game.player().dice.map(func(d): return [d.raw, d.bonus, d.carried]))
+	return snap
+
+
+func _play_events() -> void:
+	var now := _snapshot()
+	var was := last_snap
+	last_snap = now
+	if was.is_empty():
+		return
+	if now.phase == FoGame.Phase.GAME_OVER:
+		if was.phase != FoGame.Phase.GAME_OVER:
+			_play("game_over")
+		return
+	if now.quest != was.quest:
+		_play("quest_end")
+	for pi in now.ingredients.size():
+		var cards: Array = now.ingredients[pi]
+		if cards.size() > was.ingredients[pi].size():
+			_play_file(FoAssets.ingredient_sound_path(cards[-1]), 0.6)
+		if now.sharpen[pi] > was.sharpen[pi]:
+			_play("sharpen")
+		if now.reserve[pi] > was.reserve[pi]:
+			_play("reserve")
+	if now.phase == FoGame.Phase.REACT:
+		if was.phase != FoGame.Phase.REACT or was.kind != now.kind:
+			_play("challenge")
+		if was.phase != FoGame.Phase.REACT or was.kind != now.kind or was.current != now.current:
+			_play("roll")
+		elif was.dice != now.dice:
+			_play("reaction")
