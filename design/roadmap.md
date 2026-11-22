@@ -17,9 +17,9 @@ online multiplayer, and character portraits.
 - [x] Rules engine exposes the breakdown as data (pure, unit-tested) and the UI only displays it.
 
 ## Milestone 2: Styled layout, light animation
-- [ ] Themed panels: player mats with card art, a market area, and Challenge cards as cards rather than text.
-- [ ] Tweens: cards move market → player, dice tumble before showing values, results fade in.
-- [ ] Respect a reduced-motion setting (see Milestone 5).
+- [x] Themed panels: player mats with card art, a market area, and Challenge cards as cards rather than text.
+- [x] Tweens: cards move market → player, dice tumble before showing values, results fade in.
+- [x] Respect a reduced-motion setting (toggle on the setup screen; moves to the pause menu in Milestone 3).
 
 ## Milestone 3: Game flow
 - [ ] Save / resume: autosave after every action (FoGame state + RNG state), "Continue" on the
