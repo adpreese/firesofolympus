@@ -239,3 +239,37 @@ func test_history_matches_scores() -> void:
 				var sh_row = sh.rows.filter(func(r): return r.player == row.player)[0]
 				eq(row.challenge, sh_row.successes, "seed %d challenge score" % s)
 		eq(g.history[-1].final, true, "seed %d last quest is final" % s)
+
+
+## Saves are seed + move list: replaying the moves (after a JSON round trip) must rebuild
+## the same game at every point, mid-game included.
+func test_replay_rebuilds_game() -> void:
+	for s in 40:
+		var g := _new_game(2 + s % 3, 500 + s)
+		var stop := 20 + s * 7
+		var steps := 0
+		while g.phase != FoGame.Phase.GAME_OVER and steps < stop:
+			FoBot.step(g)
+			steps += 1
+		var names := g.players.map(func(p): return p.name)
+		var bots := g.players.map(func(p): return p.is_bot)
+		var moves = JSON.parse_string(JSON.stringify(g.moves))
+		var r := FoGame.replay(data, names, bots, g.seed_value, moves)
+		ok(r != null, "seed %d replayed" % s)
+		if r == null:
+			continue
+		eq(r.log_lines, g.log_lines, "seed %d log" % s)
+		eq([r.phase, r.current, r.quest, r.rng.state], [g.phase, g.current, g.quest, g.rng.state], "seed %d state" % s)
+		eq(r.history.size(), g.history.size(), "seed %d history" % s)
+		# and the replayed game plays on exactly like the original
+		_play_out(g)
+		_play_out(r)
+		eq(r.log_lines, g.log_lines, "seed %d continued" % s)
+
+
+func test_replay_rejects_bad_moves() -> void:
+	var g := _new_game(2, 7)
+	ok(FoGame.replay(data, ["a", "b"], [true, true], 7, [["reserve", 3]]) == null, "illegal move")
+	ok(FoGame.replay(data, ["a", "b"], [true, true], 7, [["nonsense"]]) == null, "unknown move")
+	ok(FoGame.replay(data, ["a", "b"], [true, true], 7, ["draft"]) == null, "malformed move")
+	ok(g.moves.is_empty(), "no moves before anyone acts")

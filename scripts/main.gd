@@ -1,13 +1,12 @@
 extends Control
 ## Pass-and-play UI. All rules live in FoGame; this only draws state and forwards clicks.
-## CPU seats are driven by FoBot, one decision every bot_delay seconds.
+## CPU seats are driven by FoBot, one decision every FoSettings.cpu_delay() seconds.
 ## The look (theme, card tiles, dice) lives in FoUI; art, fonts and sounds come from FoAssets.
 ## Sounds and animations are triggered by diffing game state between redraws, so CPU moves
 ## look and sound the same as human ones. CPU turns wait while anything is animating or
 ## an overlay (results screen, zoomed card) is open.
 ## Smoke test: `godot -- --autoplay` plays an all-CPU game at full speed and quits.
 
-const BOT_DELAY := 0.45
 const MAX_PLAYERS := 4
 const DEFAULT_NAMES := ["Andrea", "Bob", "Carlos", "Dhivya"]
 const SFX_VOICES := 8
@@ -17,15 +16,10 @@ const TUMBLE_TICK := 0.06
 const FLIGHT_TIME := 0.35  # a card moving between the table and a mat
 const FADE_TIME := 0.22    # overlays fading in
 
-static var sound_on := true
-static var music_on := true
-static var reduce_motion := false
-
 var data: CardData
 var game: FoGame
 var selected_reaction := ""
 var bot_wait := 0.0
-var bot_delay := BOT_DELAY
 var autoplay := "--autoplay" in OS.get_cmdline_user_args()
 
 var seat_rows: Array = []  # [row, LineEdit, CheckBox]
@@ -57,14 +51,23 @@ var tumble_tick := 0.0
 var card_nodes := {}           # card id -> [zone, Control, card name] from the latest render
 var flights := 0               # cards in the air
 
+var persist := false           # autosave to FoSave (off for tests and --autoplay)
+var saved := []                # [moves, seen] last written, to skip identical saves
+var resume := []               # [FoGame, seen] from the save file, for the title screen
+var menu := ""                 # open menu page: pause, settings, rules, restart ("" = none)
+var menu_back := ""            # page that settings / rules return to
+var handoff := -1              # human seat the device should be passed to, -1 = none
+var last_human := -1           # human seat that last had a decision
+
 
 func _ready() -> void:
+	FoSettings.load_file()
+	persist = not autoplay
 	theme = FoUI.make_theme()
 	_setup_audio()
 	data = CardData.load_default()
 	_show_setup()
 	if autoplay:
-		bot_delay = 0.0
 		for row in seat_rows:
 			row[2].button_pressed = true
 	if autoplay or "--start" in OS.get_cmdline_user_args():
@@ -99,7 +102,7 @@ func _process(delta: float) -> void:
 	bot_wait -= delta
 	if bot_wait > 0:
 		return
-	bot_wait = bot_delay
+	bot_wait = 0.0 if autoplay else FoSettings.cpu_delay()
 	FoBot.step(game)
 	_refresh()
 
@@ -110,6 +113,9 @@ func _show_setup() -> void:
 	game = null
 	action_box = null
 	overlay = null
+	menu = ""
+	zoom = {}
+	resume = FoSave.read(data) if persist else []
 	_clear(self)
 	add_child(FoUI.background())
 	var center := CenterContainer.new()
@@ -127,6 +133,19 @@ func _show_setup() -> void:
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	sub.custom_minimum_size.x = 720
 	box.add_child(sub)
+	if not resume.is_empty():
+		var g: FoGame = resume[0]
+		var cont := _title_button("Continue", func(): _enter_game(resume[0], resume[1]))
+		cont.add_theme_stylebox_override("normal", FoUI.box(FoUI.PANEL_LIGHT, FoUI.GOLD, 2, 8, 10))
+		cont.add_theme_color_override("font_color", FoUI.GOLD)
+		box.add_child(cont)
+		var who: Array = g.players.map(func(p): return p.name)
+		var where := FoUI.label("Quest %d of 3 with %s" % [g.quest + 1, ", ".join(who)], 18, FoUI.MUTED)
+		where.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		box.add_child(where)
+		var or_new := FoUI.heading("Or a new game", 22, FoUI.MUTED)
+		or_new.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		box.add_child(or_new)
 	if not data.errors.is_empty():
 		box.add_child(FoUI.label("Card data problems:\n" + "\n".join(data.errors), 18, FoUI.RED))
 	var row := HBoxContainer.new()
@@ -153,19 +172,26 @@ func _show_setup() -> void:
 		r.add_child(cpu)
 		box.add_child(r)
 		seat_rows.append([r, name_edit, cpu])
-	var options := HFlowContainer.new()
-	options.add_child(_toggle("Sound effects", sound_on, func(on): sound_on = on))
-	options.add_child(_toggle("Music", music_on, func(on):
-		music_on = on
-		_update_music()))
-	options.add_child(_toggle("Reduce motion", reduce_motion, func(on): reduce_motion = on))
+	var options := HBoxContainer.new()
+	options.add_theme_constant_override("separation", 12)
+	options.add_child(_button("Settings", func(): _open_menu("settings")))
+	options.add_child(_button("How to play", func(): _open_menu("rules")))
 	box.add_child(options)
-	var start := _button("Begin the Quests", _start_game)
-	start.custom_minimum_size.y = 64
-	start.add_theme_font_override("font", FoAssets.font(FoUI.HEADING_FONT))
-	start.add_theme_font_size_override("font_size", 28)
-	box.add_child(start)
+	box.add_child(_title_button("Begin the Quests", _start_game))
+	if not resume.is_empty():
+		var note := FoUI.label("Beginning a new game replaces the saved one.", 18, FoUI.MUTED)
+		note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		box.add_child(note)
 	_update_seats()
+	_add_overlay()
+
+
+func _title_button(text: String, f: Callable) -> Button:
+	var b := _button(text, f)
+	b.custom_minimum_size.y = 64
+	b.add_theme_font_override("font", FoAssets.font(FoUI.HEADING_FONT))
+	b.add_theme_font_size_override("font_size", FoUI.fs(28))
+	return b
 
 
 func _update_seats() -> void:
@@ -180,18 +206,33 @@ func _start_game() -> void:
 		var n: String = seat_rows[i][1].text.strip_edges()
 		names.append(n if n != "" else "Player %d" % (i + 1))
 		bots.append(seat_rows[i][2].button_pressed)
-	game = FoGame.new(data)
-	game.setup(names, bots, randi())
+	_new_game(names, bots)
+
+
+func _new_game(names: Array, bots: Array) -> void:
+	var g := FoGame.new(data)
+	g.setup(names, bots, randi())
+	_enter_game(g, 0)
+	_play("start")
+
+
+## Show `g` on the board. `seen`: history entries already dismissed (from a save).
+func _enter_game(g: FoGame, seen: int) -> void:
+	game = g
+	resume = []
 	last_snap = {}
 	results_queue.clear()
-	history_seen = 0
+	history_seen = seen
+	saved = []
+	menu = ""
+	handoff = -1
+	last_human = -1
 	zoom = {}
 	selected_die = -1
 	tumble_left = 0.0
 	card_nodes = {}
 	flights = 0
 	overlay_key = ""
-	_play("start")
 	_build_board()
 
 
@@ -242,7 +283,7 @@ func _build_board() -> void:
 	log_view = RichTextLabel.new()
 	log_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	log_view.scroll_following = true
-	log_view.add_theme_font_size_override("normal_font_size", 15)
+	log_view.add_theme_font_size_override("normal_font_size", FoUI.fs(15))
 	log_view.add_theme_color_override("default_color", FoUI.MUTED)
 	log_box.add_child(log_view)
 	root.add_child(log_panel)
@@ -251,10 +292,15 @@ func _build_board() -> void:
 	fx_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
 	fx_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(fx_layer)
+	_add_overlay()
+	_refresh()
+
+
+func _add_overlay() -> void:
 	overlay = Control.new()
 	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(overlay)
-	_refresh()
+	_render_overlay()
 
 
 func _refresh() -> void:
@@ -263,6 +309,8 @@ func _refresh() -> void:
 	var old_cards := _card_rects()
 	_play_events()
 	_sync_history()
+	_autosave()
+	_check_handoff()
 	card_nodes = {}
 	_render_players()
 	_render_header()
@@ -283,6 +331,16 @@ func _render_header() -> void:
 		var c := FoUI.chip(phase_name, FoUI.INK, 18)
 		c.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		top.add_child(c)
+	var gap := Control.new()
+	gap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top.add_child(gap)
+	var menu_button := Button.new()
+	menu_button.text = "Menu"
+	menu_button.custom_minimum_size = Vector2(120, 48)
+	menu_button.pressed.connect(func():
+		_play("click")
+		_open_menu("pause"))
+	top.add_child(menu_button)
 	header.add_child(top)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 14)
@@ -594,9 +652,9 @@ func _sync_history() -> void:
 		history_seen += 1
 
 
-## True while a results screen or zoomed card is up.
+## True while a results screen, zoomed card, menu or hand-off screen is up.
 func _blocking() -> bool:
-	return not results_queue.is_empty() or not zoom.is_empty()
+	return not results_queue.is_empty() or not zoom.is_empty() or menu != "" or handoff >= 0
 
 
 ## True while CPU players should wait: an overlay is open or something is animating.
@@ -619,7 +677,7 @@ func _render_overlay() -> void:
 		return
 	_clear(overlay)
 	results_detail = null
-	overlay.visible = _blocking()
+	overlay.visible = _blocking() and (game != null or menu != "")
 	if not overlay.visible:
 		overlay_key = ""
 		return
@@ -632,14 +690,23 @@ func _render_overlay() -> void:
 	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	overlay.add_child(center)
 	var key := ""
-	if not zoom.is_empty():
+	if menu != "":
+		if menu == "pause":
+			dim.gui_input.connect(_close_menu_on_click)
+		center.add_child(_menu_panel())
+		key = "menu"  # pages within the menu switch without a fade
+	elif not zoom.is_empty():
 		dim.gui_input.connect(func(ev): if _is_click(ev): _close_zoom())
 		center.add_child(_zoom_panel())
 		key = "zoom:%s" % zoom.card.name
-	else:
+	elif not results_queue.is_empty():
 		var entry: Dictionary = results_queue[0]
 		center.add_child(_challenge_results(entry) if entry.type == "challenge" else _quest_results(entry))
 		key = "%s:%d:%s:%d" % [entry.type, entry.quest, entry.get("kind", ""), history_seen - results_queue.size()]
+	else:
+		dim.color = Color(0.02, 0.01, 0.03, 0.96)  # mostly hide the board until they're ready
+		center.add_child(_handoff_panel())
+		key = "handoff:%d" % handoff
 	if key != overlay_key and _animate():
 		overlay.modulate.a = 0.0
 		create_tween().tween_property(overlay, "modulate:a", 1.0, FADE_TIME)
@@ -814,10 +881,259 @@ func _parts_text(parts: Array) -> String:
 	return " (" + " + ".join(scoring.map(func(p): return "%d from %s" % [p[1], p[0]])) + ")"
 
 
+# ------------------------------------------------------------------ saving & hand-off
+
+## Rewrite the save whenever a move is made or a results screen is dismissed.
+func _autosave() -> void:
+	if not persist:
+		return
+	var state := [game.moves.size(), history_seen - results_queue.size()]
+	if state == saved:
+		return
+	saved = state
+	if game.phase == FoGame.Phase.GAME_OVER:
+		FoSave.clear()
+	else:
+		FoSave.write(game, state[1])
+
+
+## Hotseat: when a decision moves to a different human, cover the board until they're ready.
+## Never for CPU turns, or with only one human at the table.
+func _check_handoff() -> void:
+	if game.phase == FoGame.Phase.GAME_OVER or game.player().is_bot:
+		return
+	var humans := game.players.filter(func(p): return not p.is_bot).size()
+	if humans >= 2 and game.current != last_human:
+		handoff = game.current
+	last_human = game.current
+
+
+func _dismiss_handoff() -> void:
+	handoff = -1
+
+
+func _handoff_panel() -> Control:
+	var p = game.players[handoff]
+	var pb := _overlay_panel(760)
+	var box: VBoxContainer = pb[1]
+	box.alignment = BoxContainer.ALIGNMENT_CENTER
+	var title := FoUI.heading("Pass to %s" % p.name, 56, FoUI.GOLD)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(title)
+	var what := FoUI.label("%s, it's your turn to %s." % [p.name, _turn_task()], 24, FoUI.INK)
+	what.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(what)
+	var go := _big_button("I'm %s, let's go" % p.name, _dismiss_handoff)
+	go.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	box.add_child(go)
+	return pb[0]
+
+
+func _turn_task() -> String:
+	match game.phase:
+		FoGame.Phase.CRAFT:
+			return "craft: draft an Ingredient, sharpen or pass"
+		FoGame.Phase.SWAP:
+			return "choose what your Rusty Bauble swaps for"
+		FoGame.Phase.WAGER:
+			return "decide whether to wager a Success"
+		FoGame.Phase.REACT:
+			return "roll for the %s Challenge" % game.challenge_kind
+		FoGame.Phase.RESERVE:
+			return "reserve an Ingredient"
+	return "play"
+
+
+# ------------------------------------------------------------------ menu & settings
+
+func _unhandled_input(ev: InputEvent) -> void:
+	if not ev.is_action_pressed("ui_cancel"):
+		return
+	if not zoom.is_empty():
+		_close_zoom()
+	elif menu != "":
+		_close_menu()
+	elif game != null:
+		_open_menu("pause")
+	get_viewport().set_input_as_handled()
+
+
+## page: pause, settings, rules or restart. Settings and rules return to where they came from.
+func _open_menu(page: String) -> void:
+	menu_back = menu if page in ["settings", "rules"] else ""
+	menu = page
+	_render_overlay()
+
+
+## Off in tests and --autoplay, like the game save.
+func _save_settings() -> void:
+	if persist:
+		FoSettings.save_file()
+
+
+func _close_menu_on_click(ev: InputEvent) -> void:
+	if _is_click(ev):
+		_close_menu()
+
+
+func _close_menu() -> void:
+	_save_settings()
+	menu = menu_back if menu in ["settings", "rules"] else ""
+	menu_back = ""
+	_render_overlay()
+
+
+func _menu_panel() -> Control:
+	match menu:
+		"settings":
+			return _settings_panel()
+		"rules":
+			return _rules_panel()
+		"restart":
+			return _restart_panel()
+	var pb := _overlay_panel(560)
+	var box: VBoxContainer = pb[1]
+	var title := FoUI.heading("Paused", 44, FoUI.GOLD)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(title)
+	box.add_child(_big_button("Resume", _close_menu))
+	box.add_child(_big_button("Settings", func(): _open_menu("settings")))
+	box.add_child(_big_button("How to play", func(): _open_menu("rules")))
+	box.add_child(_big_button("Restart", func(): _open_menu("restart")))
+	box.add_child(_big_button("Quit to title", _show_setup))
+	var note := FoUI.label("The game saves after every move. Pick it up later with Continue on the title screen.", 18, FoUI.MUTED)
+	note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(note)
+	return pb[0]
+
+
+func _restart_panel() -> Control:
+	var pb := _overlay_panel(640)
+	var box: VBoxContainer = pb[1]
+	box.add_child(FoUI.heading("Restart?", 40, FoUI.GOLD))
+	box.add_child(FoUI.label("A new game starts with the same Blacksmiths. This game will be lost.", 22))
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 14)
+	row.add_child(_big_button("Restart", func():
+		_new_game(game.players.map(func(p): return p.name), game.players.map(func(p): return p.is_bot))))
+	row.add_child(_big_button("Cancel", func(): _open_menu("pause")))
+	box.add_child(row)
+	return pb[0]
+
+
+func _settings_panel() -> Control:
+	var pb := _overlay_panel(860)
+	var box: VBoxContainer = pb[1]
+	box.add_child(FoUI.heading("Settings", 40, FoUI.GOLD))
+	var grid := GridContainer.new()
+	grid.columns = 2
+	grid.add_theme_constant_override("h_separation", 28)
+	grid.add_theme_constant_override("v_separation", 18)
+	box.add_child(grid)
+	_setting_row(grid, "Sound effects", _slider(FoSettings.sfx_volume, func(v): FoSettings.sfx_volume = v, func(): _play("click")))
+	_setting_row(grid, "Music", _slider(FoSettings.music_volume, func(v):
+		FoSettings.music_volume = v
+		_update_music()))
+	_setting_row(grid, "CPU speed", _choice(FoSettings.CPU_SPEEDS, FoSettings.cpu_speed, func(i): FoSettings.cpu_speed = i))
+	_setting_row(grid, "Text size", _choice(FoSettings.TEXT_SIZES, FoSettings.text_size, func(i):
+		FoSettings.text_size = i
+		_apply_text_size()))
+	var motion := _toggle("Fewer animations", FoSettings.reduce_motion, func(on):
+		FoSettings.reduce_motion = on
+		_save_settings())
+	_setting_row(grid, "Reduce motion", motion)
+	box.add_child(_big_button("Done", _close_menu))
+	return pb[0]
+
+
+func _setting_row(grid: GridContainer, text: String, control: Control) -> void:
+	var l := FoUI.label(text, 22, FoUI.INK, false)
+	l.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	grid.add_child(l)
+	grid.add_child(control)
+
+
+## A 0..1 volume slider. `released` runs when a drag ends (e.g. to preview the sound).
+func _slider(value: float, changed: Callable, released := Callable()) -> HSlider:
+	var sl := HSlider.new()
+	sl.min_value = 0.0
+	sl.max_value = 1.0
+	sl.step = 0.05
+	sl.value = value
+	sl.custom_minimum_size = Vector2(420, 44)
+	sl.value_changed.connect(func(v): changed.call(v))
+	sl.drag_ended.connect(func(_changed):
+		_save_settings()
+		if released.is_valid():
+			released.call())
+	return sl
+
+
+## A row of buttons, one of them selected.
+func _choice(options: Array, selected: int, f: Callable) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	var group := ButtonGroup.new()
+	for i in options.size():
+		var b := Button.new()
+		b.text = options[i]
+		b.toggle_mode = true
+		b.button_group = group
+		b.button_pressed = i == selected
+		b.custom_minimum_size = Vector2(132, 48)
+		b.pressed.connect(func():
+			_play("toggle")
+			f.call(i)
+			_save_settings())
+		row.add_child(b)
+	return row
+
+
+## Text size changes rebuild the current screen (keeping the setup screen's seats).
+func _apply_text_size() -> void:
+	theme = FoUI.make_theme()
+	if game != null:
+		_build_board()
+		return
+	var page := menu
+	var back := menu_back
+	var count := count_spin.value
+	var seats := seat_rows.map(func(r): return [r[1].text, r[2].button_pressed])
+	_show_setup()
+	count_spin.value = count
+	for i in seats.size():
+		seat_rows[i][1].text = seats[i][0]
+		seat_rows[i][2].button_pressed = seats[i][1]
+	menu = page
+	menu_back = back
+	_render_overlay()
+
+
+func _rules_panel() -> Control:
+	var pb := _overlay_panel(1240)
+	var box: VBoxContainer = pb[1]
+	box.add_child(FoUI.heading("How to play", 40, FoUI.GOLD))
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size.y = 700
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	var text := VBoxContainer.new()
+	text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	text.add_theme_constant_override("separation", 8)
+	for sec in FoRulesText.SECTIONS:
+		text.add_child(FoUI.heading(sec[0], 24, FoUI.GOLD))
+		var body := FoUI.label(sec[1], 21)
+		body.custom_minimum_size.x = 1140
+		text.add_child(body)
+	scroll.add_child(text)
+	box.add_child(scroll)
+	box.add_child(_big_button("Done", _close_menu))
+	return pb[0]
+
+
 # ------------------------------------------------------------------ animation
 
 func _animate() -> bool:
-	return not reduce_motion and not autoplay and is_inside_tree()
+	return not FoSettings.reduce_motion and not autoplay and is_inside_tree()
 
 
 ## Dice show random faces for a moment after a roll, then settle with a small pop.
@@ -920,7 +1236,7 @@ func _button(text: String, f: Callable, click_sound := true) -> Button:
 func _big_button(text: String, f: Callable) -> Button:
 	var b := _button(text, f)
 	b.custom_minimum_size = Vector2(220, 60)
-	b.add_theme_font_size_override("font_size", 24)
+	b.add_theme_font_size_override("font_size", FoUI.fs(24))
 	return b
 
 
@@ -994,7 +1310,6 @@ func _setup_audio() -> void:
 	if m is AudioStreamMP3:
 		m.loop = true
 	music.stream = m
-	music.volume_db = MUSIC_DB
 	audio_root.add_child(music)
 	_update_music()
 
@@ -1002,9 +1317,12 @@ func _setup_audio() -> void:
 func _update_music() -> void:
 	if music == null or music.stream == null:
 		return
-	if music_on and not music.playing:
+	var on := FoSettings.music_volume > 0.0
+	if on:
+		music.volume_db = MUSIC_DB + linear_to_db(FoSettings.music_volume)
+	if on and not music.playing:
 		music.play()
-	elif not music_on:
+	elif not on:
 		music.stop()
 
 
@@ -1013,7 +1331,7 @@ func _play(event: String) -> void:
 
 
 func _play_file(path: String, volume := 0.5) -> void:
-	if not sound_on or sfx.is_empty() or not is_inside_tree():
+	if FoSettings.sfx_volume <= 0.0 or sfx.is_empty() or not is_inside_tree():
 		return
 	var s := FoAssets.stream(path)
 	if s == null:
@@ -1021,7 +1339,7 @@ func _play_file(path: String, volume := 0.5) -> void:
 	var p := sfx[sfx_next]
 	sfx_next = (sfx_next + 1) % sfx.size()
 	p.stream = s
-	p.volume_db = linear_to_db(volume)
+	p.volume_db = linear_to_db(volume * FoSettings.sfx_volume)
 	p.play()
 
 

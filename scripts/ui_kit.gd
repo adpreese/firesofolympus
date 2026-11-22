@@ -25,7 +25,7 @@ const MINI := Vector2(84, 104)   # cards on a player's mat
 
 static func make_theme() -> Theme:
 	var t := Theme.new()
-	t.default_font_size = 22
+	t.default_font_size = fs(22)
 	t.default_font = FoAssets.font(BODY_FONT)
 	t.set_color("font_color", "Label", INK)
 	var states := {
@@ -45,6 +45,11 @@ static func make_theme() -> Theme:
 	t.set_stylebox("focus", "LineEdit", box(PANEL, GOLD, 2, 6, 8))
 	t.set_stylebox("panel", "PanelContainer", box(PANEL, EDGE))
 	return t
+
+
+## A font size scaled by the player's text size setting.
+static func fs(size: int) -> int:
+	return roundi(size * FoSettings.text_scale())
 
 
 static func box(bg: Color, border := EDGE, width := 1, radius := 10, margin := 12) -> StyleBoxFlat:
@@ -69,7 +74,7 @@ static func label(text: String, size := 22, color := INK, wrap := true) -> Label
 	l.text = text
 	if wrap:
 		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	l.add_theme_font_size_override("font_size", size)
+	l.add_theme_font_size_override("font_size", fs(size))
 	l.add_theme_color_override("font_color", color)
 	return l
 
@@ -141,11 +146,14 @@ static func card_tile(title: String, body: String, tex: Texture2D, size := TILE,
 		var blank := Control.new()
 		blank.custom_minimum_size = Vector2(art_size, art_size)
 		v.add_child(blank)
+	# Tile text stays at its base size (the tile can't grow); the zoom view is for reading.
 	var name_label := heading(title, 11 if small else 16, GOLD)
+	name_label.add_theme_font_size_override("font_size", 11 if small else 16)
 	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(name_label)
 	if body != "":
 		var text := label(body, 14, INK)
+		text.add_theme_font_size_override("font_size", 14)
 		text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		v.add_child(text)
 	for c in v.get_children():

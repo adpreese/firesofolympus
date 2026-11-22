@@ -19,15 +19,17 @@ online multiplayer, and character portraits.
 ## Milestone 2: Styled layout, light animation
 - [x] Themed panels: player mats with card art, a market area, and Challenge cards as cards rather than text.
 - [x] Tweens: cards move market → player, dice tumble before showing values, results fade in.
-- [x] Respect a reduced-motion setting (toggle on the setup screen; moves to the pause menu in Milestone 3).
+- [x] Respect a reduced-motion setting (now in Settings).
 
 ## Milestone 3: Game flow
-- [ ] Save / resume: autosave after every action (FoGame state + RNG state), "Continue" on the
-      title screen; survives a browser refresh and the iOS app being killed. Single save slot.
-- [ ] Pause menu: resume, restart, quit to title, rules reference, settings
+- [x] Save / resume: autosave after every action, "Continue" on the title screen; survives a
+      browser refresh and the iOS app being killed. Single save slot. Stored as seed + move list
+      and replayed on load (`FoGame.replay`), so the bot must never draw from `game.rng`.
+- [x] Pause menu: resume, restart, quit to title, rules reference, settings
       (SFX/music volume, CPU speed, text size, reduced motion).
-- [ ] Hotseat hand-off: a "Pass to <name>" screen only when control moves from one human to a
-      *different* human. Never shown for CPU turns or in solo play.
+- [x] Hotseat hand-off: a "Pass to <name>" screen only when control moves from one human to a
+      *different* human. Never shown for CPU turns or in solo play. Also shown for the first
+      human decision of a hotseat game, new or resumed.
 
 ## Milestone 4: CPU opponents
 - [ ] Difficulty levels: Easy (noisy heuristic), Normal (current bot), Hard (Monte Carlo lookahead
@@ -39,4 +41,4 @@ online multiplayer, and character portraits.
 ## Milestone 5: Platform & accessibility
 - [ ] iOS: safe areas, touch-sized targets (≥ 44 pt), haptics on roll/draft, app icon and launch screen.
 - [ ] Colourblind-safe die markers: magic and kept dice get a shape or icon, not just colour.
-- [ ] Text size option and reduced-motion option.
+- [x] Text size option and reduced-motion option (landed with the Milestone 3 settings).

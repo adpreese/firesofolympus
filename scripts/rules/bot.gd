@@ -63,7 +63,7 @@ static func _craft(g: FoGame) -> void:
 	var action := "pass"
 	var card_id := -1
 	for c in g.market + g.reserve_options(pi):
-		var v := card_value(g, pi, c) + g.rng.randf() * 0.3
+		var v := card_value(g, pi, c) + _noise(g, c.id) * 0.3
 		if v > best:
 			best = v
 			action = "draft"
@@ -80,6 +80,12 @@ static func _craft(g: FoGame) -> void:
 			g.act_sharpen()
 		_:
 			g.act_pass()
+
+
+## A repeatable 0..1 tie-breaker that leaves g.rng alone, so a game's moves replay exactly
+## without the bot (see FoGame.replay).
+static func _noise(g: FoGame, salt: int) -> float:
+	return float(hash([g.seed_value, g.moves.size(), salt]) & 0xFFFF) / 65535.0
 
 
 static func _swap(g: FoGame) -> void:

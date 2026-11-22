@@ -32,11 +32,18 @@ Targets: Web (primary for playtesting) and iOS. Landscape 1920x1080 base, `canva
   - `bot.gd` (FoBot): heuristic player, one decision per `step()`
 - `scripts/main.gd` — pass-and-play UI built in code; only reads FoGame state and forwards clicks
   (sounds fire by diffing FoGame state between redraws, so CPU moves are audible too)
-  Results screens come from `FoGame.history`; CPU turns wait while an overlay (results/zoom) is open.
+  Results screens come from `FoGame.history`; CPU turns wait while an overlay (results, zoom, menu, hand-off) is open.
   Die explanations come from `FoGame.die_breakdown` (same code path as `die_value`).
 - `scripts/ui_kit.gd` (FoUI) — the look: colours, global Theme, card tiles, dice, chips. No game logic.
   Animations (dice tumble, card flights, overlay fades) live in main.gd, are skipped when
-  `reduce_motion`, `--autoplay` or not in the tree, and CPU turns wait for them (`_busy()`).
+  `FoSettings.reduce_motion`, `--autoplay` or not in the tree, and CPU turns wait for them (`_busy()`).
+- `scripts/save.gd` (FoSave) — single save slot `user://save.json`: names, bots, seed and `FoGame.moves`.
+  Loading replays the moves (`FoGame.replay`); a save whose moves no longer apply is ignored.
+  Anything that draws from `FoGame.rng` outside an `act_*` call (e.g. the bot) would break replay.
+- `scripts/settings.gd` (FoSettings) — volumes, CPU speed, text size, reduced motion in `user://settings.cfg`.
+  Scale font sizes with `FoUI.fs()` (FoUI.label/heading already do).
+- `scripts/rules_text.gd` (FoRulesText) — the in-game "How to play" summary; keep it in step with `design/rules.md`.
+- main.gd only writes saves/settings when `persist` (off in tests and `--autoplay`).
 - `scripts/assets.gd` (FoAssets) — maps CSV art names / card names / game events to files in `assets/`
   (`ART_ALIASES` for renamed images, `MISSING_ART` for cards with no image yet, `INGREDIENT_SOUNDS`, `SFX`).
   Pixel art is nearest-upscaled at load. Web export excludes the duplicate music `.ogg`.

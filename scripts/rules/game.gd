@@ -72,6 +72,10 @@ var log_lines: PackedStringArray = []
 ##     carried, steps}], result, successes | penalty, parts, note}]}
 ##   {type: "quest", quest, final, rows: [{player, challenge, wager, score, total}]}
 var history: Array = []
+## Every successful move, in order, as [method, args...]. With the seed this replays the
+## whole game (see `replay`), which is how saves work.
+var moves: Array = []
+var seed_value := 0
 
 var _turn_step := -1
 var _challenge_pos := -1
@@ -84,8 +88,10 @@ func _init(card_data: CardData) -> void:
 	data = card_data
 
 
-func setup(names: Array, bots: Array, seed_value: int) -> void:
-	rng.seed = seed_value
+func setup(names: Array, bots: Array, seed_in: int) -> void:
+	seed_value = seed_in
+	rng.seed = seed_in
+	moves.clear()
 	players.clear()
 	for i in names.size():
 		players.append(Player.new(names[i], bots[i]))
@@ -370,6 +376,43 @@ func winners() -> Array[int]:
 	return out
 
 
+# ------------------------------------------------------------------ moves & replay
+
+## Apply one entry of `moves` (also accepts JSON-decoded ones, where numbers are floats).
+func play_move(m: Array) -> bool:
+	if m.is_empty():
+		return false
+	match str(m[0]):
+		"draft":
+			return m.size() == 2 and act_draft(int(m[1]))
+		"sharpen":
+			return act_sharpen()
+		"pass":
+			return act_pass()
+		"swap":
+			return m.size() == 3 and act_swap(int(m[1]), int(m[2]))
+		"wager":
+			return m.size() == 2 and act_wager(bool(m[1]))
+		"react":
+			return m.size() == 3 and apply_reaction(str(m[1]), int(m[2]))
+		"finish":
+			return finish_reactions()
+		"reserve":
+			return m.size() == 2 and act_reserve(int(m[1]))
+	return false
+
+
+## A new game rebuilt from its setup and move list, or null if any move no longer applies
+## (e.g. a save from an older version of the rules).
+static func replay(card_data: CardData, names: Array, bots: Array, seed_in: int, move_list: Array) -> FoGame:
+	var g := FoGame.new(card_data)
+	g.setup(names, bots, seed_in)
+	for m in move_list:
+		if not (m is Array and g.play_move(m)):
+			return null
+	return g
+
+
 # ------------------------------------------------------------------ craft phase
 
 func act_draft(card_id: int) -> bool:
@@ -392,6 +435,7 @@ func act_draft(card_id: int) -> bool:
 	p.ap += -1 + int(d.get("ap", 0))
 	p.ingredients.append(card)
 	_log("%s takes %s (%d AP left)" % [p.name, card.name, p.ap])
+	moves.append(["draft", card_id])
 	if d.get("swap_on_draft", false) and not in_reserve(current, card.id) and not swap_targets(current).is_empty():
 		_pending_bauble_id = card.id
 		phase = Phase.SWAP
@@ -408,6 +452,7 @@ func act_sharpen() -> bool:
 	p.sharpen += 1
 	p.electrum_dice += electrum
 	p.ap -= 1
+	moves.append(["sharpen"])
 	_log("%s sharpens (+%dd6, %d AP left)" % [p.name, SHARPEN_DICE[p.sharpen - 1] + electrum, p.ap])
 	_advance_craft()
 	return true
@@ -417,6 +462,7 @@ func act_pass() -> bool:
 	if phase != Phase.CRAFT:
 		return false
 	player().passed = true
+	moves.append(["pass"])
 	_log("%s passes" % player().name)
 	_advance_craft()
 	return true
@@ -437,6 +483,7 @@ func act_swap(target_player: int, card_id: int) -> bool:
 			bi = i
 	if ti < 0 or bi < 0:
 		return false
+	moves.append(["swap", target_player, card_id])
 	var taken: Dictionary = q.ingredients[ti]
 	q.ingredients[ti] = p.ingredients[bi]
 	p.ingredients[bi] = taken
@@ -484,6 +531,7 @@ func act_wager(yes: bool) -> bool:
 		return false
 	var p := player()
 	p.wager = yes
+	moves.append(["wager", yes])
 	p.wager_decided = true
 	if yes:
 		_log("  %s wagers a Success (Gambler's Charm)" % p.name)
@@ -505,6 +553,9 @@ func apply_reaction(key: String, die_idx: int) -> bool:
 	if r.is_empty():
 		return false
 	var die: Die = p.dice[die_idx]
+	if r.kind == "keep" and not die.carried and r.left <= 0:
+		return false
+	moves.append(["react", key, die_idx])
 	var before := die_value(current, die, challenge_kind)
 	match r.kind:
 		"reroll":
@@ -518,8 +569,6 @@ func apply_reaction(key: String, die_idx: int) -> bool:
 				die.carried = false
 				p.reaction_uses[key] = r.left + 1
 				return true
-			if r.left <= 0:
-				return false
 			die.carried = true
 	p.reaction_uses[key] = r.left - 1
 	return true
@@ -529,6 +578,7 @@ func finish_reactions() -> bool:
 	if phase != Phase.REACT:
 		return false
 	var p := player()
+	moves.append(["finish"])
 	var e := evaluate(current, challenge_kind)
 	var vals := values(current, challenge_kind)
 	if challenge_kind == STRENGTH:
@@ -710,6 +760,7 @@ func act_reserve(card_id: int) -> bool:
 	if card.is_empty():
 		return false
 	p.reserve.append(card)
+	moves.append(["reserve", card_id])
 	_log("%s reserves %s" % [p.name, card.name])
 	_next_reserve()
 	return true
