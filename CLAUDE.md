@@ -22,6 +22,7 @@ Targets: Web (primary for playtesting) and iOS. Landscape 1920x1080 base, `canva
 
 ## Layout
 - `design/rules.md` — the designer's rules; `design/rules_interpretations.md` — how ambiguous rules are implemented (keep in sync with code)
+- `design/roadmap.md` — release milestones and scope decisions; tick items off as they land
 - `data/*.csv` — card text exported from the design spreadsheet (imported as "keep" files so they ship as-is)
 - `assets/` — art, audio, fonts copied from the earlier React Native prototype (`foo-native-web-test`)
 - `scripts/rules/` — pure rules engine, no Nodes:
@@ -31,6 +32,8 @@ Targets: Web (primary for playtesting) and iOS. Landscape 1920x1080 base, `canva
   - `bot.gd` (FoBot): heuristic player, one decision per `step()`
 - `scripts/main.gd` — minimal pass-and-play UI built in code; only reads FoGame state and forwards clicks
   (sounds fire by diffing FoGame state between redraws, so CPU moves are audible too)
+  Results screens come from `FoGame.history`; CPU turns wait while an overlay (results/zoom) is open.
+  Die explanations come from `FoGame.die_breakdown` (same code path as `die_value`).
 - `scripts/assets.gd` (FoAssets) — maps CSV art names / card names / game events to files in `assets/`
   (`ART_ALIASES` for renamed images, `MISSING_ART` for cards with no image yet, `INGREDIENT_SOUNDS`, `SFX`).
   Pixel art is nearest-upscaled at load. Web export excludes the duplicate music `.ogg`.

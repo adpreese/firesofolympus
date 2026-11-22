@@ -74,6 +74,76 @@ static func strength_penalty(card_name: String, vals: Array) -> Dictionary:
 	return out
 
 
+## Which dice matter for this Challenge, for highlighting: one int per die.
+## Sharpness: 1 = the die scores. Strength: -1 = the die triggers the penalty,
+## 1 = the die protects you (Giant Crab's set of 3). Sum-based cards (Ice Dragon, Kraken) mark nothing.
+static func die_marks(card_name: String, vals: Array) -> Array[int]:
+	var marks: Array[int] = []
+	marks.resize(vals.size())
+	match card_name:
+		"Razor Mantis":
+			_mark(marks, vals, func(v): return v >= 6, 1)
+		"Animated Flytrap":
+			_mark(marks, vals, func(v): return v >= 4, 1)
+		"Ancient Geometer":
+			_mark(marks, vals, func(v): return is_prime(v), 1)
+		"Vampire Bat":  # both dice of each pair
+			var counts := _counts(vals)
+			var left := {}
+			for v in counts:
+				left[v] = counts[v] - counts[v] % 2
+			_mark_up_to(marks, vals, left, 1)
+		"Ghost Knight":  # the first die of each distinct value
+			var left := {}
+			for v in vals:
+				left[v] = 1
+			_mark_up_to(marks, vals, left, 1)
+		"Killer Bee":
+			var counts := _counts(vals)
+			var left := {}
+			for v in counts:
+				if counts.has(7 - v) and v != 7 - v:
+					left[v] = mini(counts[v], counts[7 - v])
+			_mark_up_to(marks, vals, left, 1)
+		"Golem", "Phantasm", "Cockatrice", "Razorback Turtle":
+			_mark(marks, vals, func(v): return v == 1, -1)
+		"Mimic":
+			_mark(marks, vals, func(v): return posmod(v, 2) == 1, -1)
+		"Giant Crab":
+			var counts := _counts(vals)
+			for v in counts:
+				if counts[v] >= 3:
+					_mark_up_to(marks, vals, {v: 3}, 1)
+					break
+	return marks
+
+
+## Extra context for sum-based Challenges, e.g. "Total 23". Empty for the rest.
+static func total_note(card_name: String, vals: Array) -> String:
+	match card_name:
+		"Ice Dragon":
+			return "Total %d (1 Success per 10)" % _sum(vals)
+		"Kraken":
+			return "Total %d (needs more than 20)" % _sum(vals)
+	return ""
+
+
+static func _mark(marks: Array[int], vals: Array, pred: Callable, m: int) -> void:
+	for i in vals.size():
+		if pred.call(vals[i]):
+			marks[i] = m
+
+
+## Marks the first left[v] dice showing each value v.
+static func _mark_up_to(marks: Array[int], vals: Array, left: Dictionary, m: int) -> void:
+	var left_now := left.duplicate()
+	for i in vals.size():
+		var v = vals[i]
+		if left_now.get(v, 0) > 0:
+			marks[i] = m
+			left_now[v] -= 1
+
+
 ## Rough cost of a penalty in Sharpness-dice terms (used by the bot).
 static func penalty_cost(p: Dictionary) -> float:
 	var cost: float = float(p.get("dice_loss", 0)) + absf(p.get("die_mod", 0)) + 0.4 * p.get("opp_rerolls", 0)
@@ -89,7 +159,7 @@ static func describe_penalty(p: Dictionary) -> String:
 	if p.get("die_mod", 0) != 0:
 		parts.append("%d to every Sharpness die" % p.die_mod)
 	if p.get("opp_rerolls", 0) > 0:
-		parts.append("opponent rerolls %d Sharpness dice" % p.opp_rerolls)
+		parts.append("opponent rerolls %d Sharpness %s" % [p.opp_rerolls, "die" if p.opp_rerolls == 1 else "dice"])
 	if p.has("cap"):
 		parts.append("Sharpness dice capped at %d" % p.cap)
 	return "no penalty" if parts.is_empty() else ", ".join(parts)

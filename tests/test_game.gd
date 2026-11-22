@@ -184,3 +184,58 @@ func test_reserve_is_required() -> void:
 		FoBot.step(g)
 	ok(not g.act_reserve(-1), "can't skip reserving")
 	ok(g.act_reserve(g.reservable(g.current)[0].id), "reserve a card")
+
+
+func test_breakdown_matches_die_value() -> void:
+	# Every die rolled in many bot games: the explanation must end at the real value.
+	for s in 40:
+		var g := _new_game(2 + s % 3, 500 + s)
+		var steps := 0
+		while g.phase != FoGame.Phase.GAME_OVER and steps < 5000:
+			if g.phase == FoGame.Phase.REACT:
+				for d in g.player().dice:
+					var b := g.die_breakdown(g.current, d, g.challenge_kind)
+					eq(b[-1].value, g.die_value(g.current, d, g.challenge_kind), "seed %d breakdown end" % s)
+			FoBot.step(g)
+			steps += 1
+
+
+func test_breakdown_steps() -> void:
+	var g := _new_game(2, 1)
+	var p = g.players[0]
+	p.ingredients = [_card("Leather Grip", 1), _card("Silver Wire", 2), _card("Manticore Poison", 3)]
+	g.strength_card = {"name": "Razorback Turtle", "type": "Giant"}
+	p.penalty = {"cap": 4}
+	var die := FoGame.Die.new(3)
+	die.bonus = 1
+	var b := g.die_breakdown(0, die, FoGame.SHARPNESS)
+	eq(b.map(func(x): return x.value), [3, 2, 3, 5, 6, 4], "roll, silver, manticore, leather, reaction, cap")
+	ok(b[-1].text.contains("Razorback Turtle"), "cap names the Challenge")
+	p.ingredients = [_card("Bronze", 1)]
+	p.penalty = {}
+	eq(g.die_breakdown(0, FoGame.Die.new(4), FoGame.STRENGTH).size(), 1, "nothing changes a plain 4")
+
+
+func test_history_matches_scores() -> void:
+	for s in 30:
+		var g := _new_game(2 + s % 3, 900 + s)
+		_play_out(g)
+		eq(g.history.size(), 9, "seed %d: 3 x (Strength, Sharpness, Quest)" % s)
+		for q in 3:
+			var st: Dictionary = g.history[q * 3]
+			var sh: Dictionary = g.history[q * 3 + 1]
+			var qr: Dictionary = g.history[q * 3 + 2]
+			eq([st.type, st.kind, sh.kind, qr.type, qr.quest], ["challenge", "Strength", "Sharpness", "quest", q], "seed %d order" % s)
+			eq(st.rows.size(), g.players.size(), "seed %d strength rows" % s)
+			eq(sh.rows.size(), g.players.size(), "seed %d sharpness rows" % s)
+			for row in sh.rows:
+				var sum := 0
+				for part in row.parts:
+					sum += part[1]
+				eq(sum, row.successes, "seed %d parts add up" % s)
+			for row in qr.rows:
+				eq(row.score, g.players[row.player].quest_scores[q], "seed %d quest score" % s)
+				eq(row.score, row.challenge + row.wager, "seed %d wager adds up" % s)
+				var sh_row = sh.rows.filter(func(r): return r.player == row.player)[0]
+				eq(row.challenge, sh_row.successes, "seed %d challenge score" % s)
+		eq(g.history[-1].final, true, "seed %d last quest is final" % s)

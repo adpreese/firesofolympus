@@ -67,11 +67,17 @@ var strength_card: Dictionary = {}
 var sharpness_card: Dictionary = {}
 var challenge_kind := STRENGTH
 var log_lines: PackedStringArray = []
+## Finished Challenges and Quests, oldest first, for results screens. Each entry:
+##   {type: "challenge", quest, kind, card, rows: [{player, skipped, dice: [{value, mark, magic,
+##     carried, steps}], result, successes | penalty, parts, note}]}
+##   {type: "quest", quest, final, rows: [{player, challenge, wager, score, total}]}
+var history: Array = []
 
 var _turn_step := -1
 var _challenge_pos := -1
 var _reserve_pos := -1
 var _pending_bauble_id := -1
+var _result := {}  # the Challenge being played, moved to history when everyone is done
 
 
 func _init(card_data: CardData) -> void:
@@ -181,23 +187,63 @@ func pool_size(pi: int, kind: String) -> Dictionary:
 
 ## Final result of one die: Effects, then Modifiers, then Reaction bonuses, then caps.
 func die_value(pi: int, die: Die, kind: String) -> int:
+	return _die_calc(pi, die, kind, null)
+
+
+## How a die reached its final value: [{text, value}], starting with the roll.
+## Each later entry is one change; the last entry's value equals die_value().
+func die_breakdown(pi: int, die: Die, kind: String) -> Array:
+	var steps := []
+	_die_calc(pi, die, kind, steps)
+	return steps
+
+
+## Shared by die_value and die_breakdown so the explanation can't drift from the rules.
+## `steps` is null on the hot path (bot lookahead) so no strings are built.
+func _die_calc(pi: int, die: Die, kind: String, steps) -> int:
+	var p: Player = players[pi]
 	var v := die.raw
+	if steps != null:
+		var src := "Kept from Strength (Jeweled Scabbard), rolled" if die.carried and kind == SHARPNESS else "Rolled"
+		steps.append({"text": "%s %d" % [src, v], "value": v})
 	if die.magic:
 		v = 5 if v <= 3 else 6
-	if flag_sum(pi, "bronze") > 0:
-		if v == 1:
-			v = 2
-		elif v == 6:
-			v = 5
-	var m := flag_sum(pi, "mod")
-	if flag_sum(pi, "leather") > 0 and (v == 2 or v == 3):
-		m += 2
-	var penalty: Dictionary = players[pi].penalty
-	if kind == SHARPNESS:
-		m += flag_sum(pi, "sharp_mod") + int(penalty.get("die_mod", 0))
-	v += m + die.bonus
-	if kind == SHARPNESS and penalty.has("cap"):
-		v = mini(v, penalty.cap)
+		if steps != null:
+			steps.append({"text": "Magic die (Sphinx's Milk): 1-3 -> 5, 4-6 -> 6", "value": v})
+	var bronze := false
+	var leather := false
+	var mods := []  # [label, delta], applied together after Effects
+	for c in p.ingredients:
+		var d := def_of(c)
+		if d.get("bronze", false):
+			bronze = true
+		if d.get("leather", false):
+			leather = true
+		if d.has("mod"):
+			mods.append([c.name, int(d.mod)])
+		if kind == SHARPNESS and d.has("sharp_mod"):
+			mods.append([c.name, int(d.sharp_mod)])
+	if bronze and (v == 1 or v == 6):
+		v = 2 if v == 1 else 5
+		if steps != null:
+			steps.append({"text": "Bronze: 1 -> 2, 6 -> 5", "value": v})
+	if leather and (v == 2 or v == 3):  # checks the post-Effect value
+		mods.append(["Leather Grip (on a 2 or 3)", 2])
+	var penalty: Dictionary = p.penalty
+	if kind == SHARPNESS and int(penalty.get("die_mod", 0)) != 0:
+		mods.append(["%s penalty" % strength_card.get("name", "Strength"), int(penalty.die_mod)])
+	for m in mods:
+		v += m[1]
+		if steps != null and m[1] != 0:
+			steps.append({"text": "%s %+d" % m, "value": v})
+	if die.bonus != 0:
+		v += die.bonus
+		if steps != null:
+			steps.append({"text": "Reactions %+d" % die.bonus, "value": v})
+	if kind == SHARPNESS and penalty.has("cap") and v > penalty.cap:
+		v = penalty.cap
+		if steps != null:
+			steps.append({"text": "Capped at %d (%s penalty)" % [penalty.cap, strength_card.get("name", "Strength")], "value": v})
 	return v
 
 
@@ -214,13 +260,39 @@ func evaluate(pi: int, kind: String) -> Dictionary:
 	var card := challenge_card(kind)
 	if kind == STRENGTH:
 		return Scoring.strength_penalty(card.name, vals)
-	var s := Scoring.sharpness_successes(card.name, vals)
-	var mithril := flag_sum(pi, "mithril")
+	var s := 0
+	for part in success_parts(pi, vals):
+		s += part[1]
+	return {"successes": s}
+
+
+## Where Sharpness Successes come from: [[source, n]] (before any Gambler's Charm wager).
+## The Challenge card is always listed first, even at 0.
+func success_parts(pi: int, vals: Array) -> Array:
+	var card := challenge_card(SHARPNESS)
+	var out := [[card.name, Scoring.sharpness_successes(card.name, vals)]]
+	var sixes := 0
 	for v in vals:
 		if v >= 6:
-			s += mithril
-	s += flag_sum(pi, "bonus_success")
-	return {"successes": s}
+			sixes += 1
+	for c in players[pi].ingredients:
+		var d := def_of(c)
+		if d.get("mithril", false) and sixes > 0:
+			out.append([c.name, sixes])
+		if d.has("bonus_success"):
+			out.append([c.name, int(d.bonus_success)])
+	return out
+
+
+## Per die, for the UI: 1 = scores (or saves you from a penalty), -1 = triggers a penalty, 0 = neither.
+func die_marks(pi: int, kind: String) -> Array[int]:
+	var vals := values(pi, kind)
+	var marks := Scoring.die_marks(challenge_card(kind).name, vals)
+	if kind == SHARPNESS and flag_sum(pi, "mithril") > 0:
+		for i in vals.size():
+			if vals[i] >= 6:
+				marks[i] = 1
+	return marks
 
 
 ## Higher is better: Successes for Sharpness, minus penalty cost for Strength.
@@ -244,7 +316,11 @@ func describe_outcome(pi: int) -> String:
 	var e := evaluate(pi, challenge_kind)
 	if challenge_kind == STRENGTH:
 		return Scoring.describe_penalty(e)
-	return "%d Successes" % e.successes
+	return successes_text(e.successes)
+
+
+static func successes_text(n: int) -> String:
+	return "%d Success%s" % [n, "" if n == 1 else "es"]
 
 
 ## Reactions usable right now: [{key, card, kind, left}].
@@ -465,7 +541,8 @@ func finish_reactions() -> bool:
 		_log("  %s: %s -> %s%s" % [p.name, str(vals), Scoring.describe_penalty(e), keep])
 	else:
 		p.quest_score = e.successes
-		_log("  %s: %s -> %d Successes" % [p.name, str(vals), e.successes])
+		_log("  %s: %s -> %s" % [p.name, str(vals), successes_text(e.successes)])
+	_record_row(current, e)
 	# "once per Quest" reactions are spent after the Challenge they were first used in.
 	for c in p.ingredients:
 		var rs: Array = def_of(c).get("reactions", [])
@@ -480,6 +557,7 @@ func finish_reactions() -> bool:
 func _start_challenges() -> void:
 	challenge_kind = STRENGTH
 	_challenge_pos = -1
+	_open_result(STRENGTH)
 	_log("-- Strength Challenge: %s --" % strength_card.name)
 	_next_challenge_player()
 
@@ -488,11 +566,13 @@ func _next_challenge_player() -> void:
 	while true:
 		_challenge_pos += 1
 		if _challenge_pos >= players.size():
+			history.append(_result)
 			if challenge_kind == SHARPNESS:
 				_end_challenges()
 				return
 			challenge_kind = SHARPNESS
 			_challenge_pos = 0
+			_open_result(SHARPNESS)
 			_log("-- Sharpness Challenge: %s --" % sharpness_card.name)
 		var pi := order[_challenge_pos]
 		var p: Player = players[pi]
@@ -501,6 +581,8 @@ func _next_challenge_player() -> void:
 		if challenge_kind == STRENGTH and flag_sum(pi, "skip_strength") > 0:
 			_log("  %s skips the Strength Challenge (Golden Apple)" % p.name)
 			p.penalty = {}
+			_result.rows.append({"player": pi, "skipped": true, "dice": [], "result": "Skipped (Golden Apple)",
+				"penalty": {}, "parts": [], "note": ""})
 			continue
 		if challenge_kind == SHARPNESS and flag_sum(pi, "gamble") > 0 and not p.wager_decided:
 			phase = Phase.WAGER
@@ -508,6 +590,29 @@ func _next_challenge_player() -> void:
 		_roll(pi)
 		phase = Phase.REACT
 		return
+
+
+func _open_result(kind: String) -> void:
+	_result = {"type": "challenge", "quest": quest, "kind": kind, "card": challenge_card(kind), "rows": []}
+
+
+func _record_row(pi: int, e: Dictionary) -> void:
+	var p: Player = players[pi]
+	var vals := values(pi, challenge_kind)
+	var marks := die_marks(pi, challenge_kind)
+	var dice := []
+	for i in p.dice.size():
+		var d: Die = p.dice[i]
+		dice.append({"value": vals[i], "mark": marks[i], "magic": d.magic,
+			"carried": d.carried, "steps": die_breakdown(pi, d, challenge_kind)})
+	var row := {"player": pi, "skipped": false, "dice": dice, "result": describe_outcome(pi),
+		"note": Scoring.total_note(challenge_card(challenge_kind).name, vals), "parts": []}
+	if challenge_kind == STRENGTH:
+		row.penalty = e.duplicate()
+	else:
+		row.successes = e.successes
+		row.parts = success_parts(pi, vals)
+	_result.rows.append(row)
 
 
 func _reset_challenge_reactions(pi: int) -> void:
@@ -573,10 +678,16 @@ func _end_challenges() -> void:
 		p.quest_score += adjust[pi]
 		_log("  %s %s the wager (%+d)" % [p.name, "wins" if adjust[pi] > 0 else "loses", adjust[pi]])
 	var summary := PackedStringArray()
-	for p in players:
+	var rows := []
+	for pi in players.size():
+		var p: Player = players[pi]
+		var challenge_score: int = p.quest_score - adjust.get(pi, 0)
 		p.quest_scores.append(p.quest_score)
 		p.total += p.quest_score
 		summary.append("%s %d (total %d)" % [p.name, p.quest_score, p.total])
+		rows.append({"player": pi, "challenge": challenge_score, "wager": adjust.get(pi, 0),
+			"score": p.quest_score, "total": p.total})
+	history.append({"type": "quest", "quest": quest, "final": quest == QUESTS.size() - 1, "rows": rows})
 	_log("Quest %d Successes: %s" % [quest + 1, ", ".join(summary)])
 	if quest == QUESTS.size() - 1:  # nothing to reserve for after the last Quest
 		_end_quest()

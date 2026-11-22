@@ -25,3 +25,26 @@ func test_strength_rules() -> void:
 	eq(Scoring.strength_penalty("Cockatrice", [1, 5]).opp_rerolls, 1, "cockatrice")
 	eq(Scoring.strength_penalty("Razorback Turtle", [1, 1, 3]).cap, 4, "turtle cap")
 	ok(not Scoring.strength_penalty("Razorback Turtle", [2, 3]).has("cap"), "turtle no ones")
+
+
+func test_die_marks() -> void:
+	eq(Scoring.die_marks("Vampire Bat", [3, 3, 3, 5, 5]), [1, 1, 0, 1, 1] as Array[int], "pairs")
+	eq(Scoring.die_marks("Ghost Knight", [2, 2, 4]), [1, 0, 1] as Array[int], "distinct")
+	eq(Scoring.die_marks("Killer Bee", [1, 6, 6, 3]), [1, 1, 0, 0] as Array[int], "sevens")
+	eq(Scoring.die_marks("Razor Mantis", [6, 7, 5]), [1, 1, 0] as Array[int], "6 or more")
+	eq(Scoring.die_marks("Mimic", [1, 2, 3]), [-1, 0, -1] as Array[int], "odd triggers")
+	eq(Scoring.die_marks("Giant Crab", [4, 4, 4, 4, 2]), [1, 1, 1, 0, 0] as Array[int], "set of 3 protects")
+	eq(Scoring.die_marks("Ice Dragon", [6, 6]), [0, 0] as Array[int], "sum-based")
+	# Marked dice must agree with the count for count-based cards.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 3
+	for card in ["Razor Mantis", "Animated Flytrap", "Ancient Geometer", "Vampire Bat", "Ghost Knight", "Killer Bee"]:
+		for t in 200:
+			var vals := []
+			for i in rng.randi_range(0, 10):
+				vals.append(rng.randi_range(-1, 9))
+			var marked := Scoring.die_marks(card, vals).count(1)
+			var n := Scoring.sharpness_successes(card, vals)
+			if card in ["Vampire Bat", "Killer Bee"]:
+				n *= 2
+			eq(marked, n, "%s %s" % [card, str(vals)])

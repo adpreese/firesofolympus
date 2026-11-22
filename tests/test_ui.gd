@@ -15,13 +15,30 @@ func test_render_every_phase() -> void:
 		ui._start_game()
 		var g: FoGame = ui.game
 		var steps := 0
+		var shown := {}
 		while g.phase != FoGame.Phase.GAME_OVER and steps < 5000:
 			seen[g.phase] = true
 			ok(ui.action_box.get_child_count() > 0, "phase %d rendered nothing" % g.phase)
+			if g.phase == FoGame.Phase.REACT and not g.player().dice.is_empty():
+				ui.selected_die = 0  # the die-breakdown label
+				ui._refresh()
+			if not ui.results_queue.is_empty():
+				ok(ui.overlay.visible and ui.overlay.get_child_count() > 0, "results overlay shown")
+				shown[ui.results_queue[0].type] = true
+				ui._dismiss_results()
+			if steps == 3:
+				if not g.market.is_empty():
+					ui._open_zoom(g.market[0], false)
+				ok(ui._blocking() and ui.overlay.visible, "ingredient zoom shown")
+				ui._open_zoom(g.strength_card, true)
+				ui._close_zoom()
+				ok(not ui.overlay.visible, "zoom closed")
 			FoBot.step(g)
 			ui._refresh()
 			steps += 1
 		ok(g.phase == FoGame.Phase.GAME_OVER, "seed %d finished" % s)
+		eq(ui.history_seen, 9, "seed %d: every Challenge and Quest reached the UI" % s)
+		ok(shown.has("challenge") and shown.has("quest"), "seed %d: both results screens rendered" % s)
 		ui.free()
 	for ph in [FoGame.Phase.CRAFT, FoGame.Phase.SWAP, FoGame.Phase.WAGER, FoGame.Phase.REACT, FoGame.Phase.RESERVE]:
 		ok(seen.has(ph), "phase %d never rendered" % ph)
