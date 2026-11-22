@@ -1,0 +1,43 @@
+Name,Description,Art
+Ice Dragon,"Sharpness - Elemental
+
+Every 10 points count as 1 Success",24_dragon.png
+Razor Mantis,"Sharpness - Demon
+
+Each 6 is a Success",90_PrayingMantis.png
+Animated Flytrap,"Sharpness - Giant
+
+Each 4 or above is a Success",22_flytrap.png
+Ancient Geometer,"Sharpness - Giant
+
+Each Prime number is a Success",01_slime.png
+Vampire Bat,"Sharpness - Elemental
+
+Matching Pairs count as 1 Successes ",07_bat.png
+Ghost Knight,"Sharpness - Giant
+
+Each distinct value is a Success",18_ghostknight.png
+Killer Bee,"Sharpness - Demon
+
+Each pair of dice that adds to 7 is a Success",05_bee.png
+Golem,"Strength - Elemental
+
+Each rolled 1 lowers Sharpness Results by -1",38_Earth_Armor.png
+Phantasm,"Strength - Demon
+
+Each rolled 1 lowers dice pool by 1",29_phantasm
+Cockatrice,"Strength - Elemental
+
+Each rolled 1 allows your opponent to re-roll 1 of your dice on the Sharpness Test",14_cockatrice.png
+Razorback Turtle,"Strength - Giant
+
+Each rolled 1 reduces your max value by 1 (6 counts as 5, etc)",21_turtle.png
+Kraken,"Strength - Giant
+
+Overall Result must greater than 20 or get -1d6",02_octopus.png
+Mimic,"Strength - Elemental
+
+Each odd die roll gives -1d6",19_mimic.png
+Giant Crab,"Strength - Demon
+
+Roll at least 3 of a kind or get -2d6",03_crab.png

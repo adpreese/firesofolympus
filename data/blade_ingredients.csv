@@ -1,0 +1,52 @@
+Name,Description,Art Name
+Gold,"+1D6 against Elementals
+Reaction: Reroll 1 die per Challenge
+",122_Ingot_Gold.png
+Hardened Steel, +3D6 ,15_ShinySteelIngot_E.png
+Manticore Poison,"+1D6 against Giants
+Modifier: +1 on Sharpness Test
+",52_Potion_Lethal.png
+Lotus Bloom, +2D6 ,01_LotusBloom.png
+Silver Wire," +2D6  
+Modifier: -1 to all dice rolls",20_AluminumWire.png
+Dragon Tooth," +2 AP
++1D6 against Demons",02_DragonTooth.png
+Soul," +1D6 
+Reaction:  +1 on one die per Challenge ",03_Soul.png
+Cold Iron," +2D6 
+ +1D6 against Elementals",21_IceCube.png
+Diamond Dust,"Reaction:+1 on 1 die per Challenge
+Reaction:+1 on 1 die per Challenge",04_DiamondDust.png
+Adamantium,"+4D6 
+-3 AP",181_Ore_Adamantine.png
+Holy Water,"-1D6 against Demons
+Reaction: Reroll 2 dice once per Quest",05_Holywater.png
+Emerald,"+1D6
++ 1 AP 
+Reaction: Reroll 1 die per Quest against Giants.",09_Emerald.png
+Mithril,"+1D6 against Elementals
+Effect: Each 6 or above grants a bonus Success
+",241_Ore_Fateful.png
+Bronze,"+1D6
+Effect: 1s become 2s
+Effect: 6s become 5s
+",13_BronzeRods.png
+Aluminum,"+2D6
+Effect: You can't sharpen this Quest",17_AluminumOrb.png
+Golden Apple,"-1D6
+Effect: Skip the Strength Challenge this Quest",07_GoldenApple.png
+Rusty Bauble,"+2D6
+When you draft this Ingredient, swap it with an opponent's Ingredient of your choice.",16_RustyTrinket.png
+Leather Grip,Modifier: +2 to dice with 2 or 3. ,08_LeatherGrip.png
+Jeweled Scabbard,"+1D6 
+Reaction: You may keep two rolls between Challenges.",14_JeweledScabbard.png
+Sphinx's Milk, +1 Magic Dice(1-3 counts as 5 and 4-6 counts as 6),37_Diluted_Blue.png
+Hyacinth,+1D6 for each other Ingredient,11_Hyacinth.png
+Electrum,"Each Sharpening action gives additional +1D6
+-1 AP",221_Ore_Angelic.png
+Beeswax," -1D6 
++ 2 AP",30_Honeycomb
+Lucky Fish Scale,"-2D6 
+Modifier:  +1 Success on Sharpness Challenge",19_GreenFishScale.png
+Gambler's Charm,"+1D6 
+Wager a Success",27_Treasure_B.png

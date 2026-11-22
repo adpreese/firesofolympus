@@ -6,6 +6,7 @@
 #   tools/build.sh sim     -> build iOS, compile for Simulator (x86_64/Rosetta; official templates
 #                             have no arm64-sim slice), install + launch on a booted iPad sim
 #   tools/build.sh check   -> import + parse all scripts, fail on errors
+#   tools/build.sh test    -> run headless unit tests (tests/test_*.gd); fails on any script error
 set -euo pipefail
 cd "$(dirname "$0")/.."
 GODOT="${GODOT:-godot}"
@@ -14,6 +15,18 @@ MODE="${2:-release}"   # pass "debug" as 2nd arg for debug builds
 case "${1:-}" in
   check)
     "$GODOT" --headless --import --quit
+    ;;
+  test)
+    "$GODOT" --headless --import --quit >/dev/null 2>&1 || true
+    set +e
+    out=$("$GODOT" --headless --script res://tests/run_tests.gd 2>&1)
+    code=$?
+    set -e
+    echo "$out" | grep -v -E "^Godot Engine|^$"
+    if echo "$out" | grep -q -E "SCRIPT ERROR|^ERROR|Parse Error"; then
+      echo "Script errors detected"; exit 1
+    fi
+    exit $code
     ;;
   web)
     rm -rf build/web && mkdir -p build/web
@@ -44,6 +57,6 @@ case "${1:-}" in
     xcrun simctl launch --console --terminate-running-process "$DEV" "$BUNDLE"
     ;;
   *)
-    sed -n '2,9p' "$0"; exit 1
+    sed -n '2,10p' "$0"; exit 1
     ;;
 esac
