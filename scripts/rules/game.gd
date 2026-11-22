@@ -37,6 +37,7 @@ class Player:
 	var passed := false
 	var ingredients: Array = []    # card dicts {id, name}
 	var sharpen := 0
+	var electrum_dice := 0         # extra dice from sharpening while holding Electrum
 	var reaction_uses := {}        # "card_id:index" -> uses left
 	var penalty := {}              # from the Strength Challenge, applied to Sharpness
 	var carry_raws: Array = []     # Jeweled Scabbard dice kept for Sharpness
@@ -165,14 +166,16 @@ func pool_size(pi: int, kind: String) -> Dictionary:
 		magic += int(d.get("magic", 0))
 		if d.get("hyacinth", false):
 			normal += p.ingredients.size() - 1
-	var electrum := flag_sum(pi, "electrum")
 	for i in p.sharpen:
-		normal += SHARPEN_DICE[i] + electrum
+		normal += SHARPEN_DICE[i]
+	normal += p.electrum_dice
 	if kind == SHARPNESS:
 		normal -= int(p.penalty.get("dice_loss", 0))
 	if normal < 0:  # penalties eat normal dice first, then magic ones
 		magic = maxi(0, magic + normal)
 		normal = 0
+	if kind == SHARPNESS:  # Jeweled Scabbard dice are extra, after penalties
+		normal += p.carry_raws.size()
 	return {"normal": normal, "magic": magic}
 
 
@@ -325,9 +328,11 @@ func act_sharpen() -> bool:
 	if phase != Phase.CRAFT or not can_sharpen(current):
 		return false
 	var p := player()
+	var electrum := flag_sum(current, "electrum")
 	p.sharpen += 1
+	p.electrum_dice += electrum
 	p.ap -= 1
-	_log("%s sharpens (+%dd6, %d AP left)" % [p.name, SHARPEN_DICE[p.sharpen - 1], p.ap])
+	_log("%s sharpens (+%dd6, %d AP left)" % [p.name, SHARPEN_DICE[p.sharpen - 1] + electrum, p.ap])
 	_advance_craft()
 	return true
 
@@ -359,7 +364,12 @@ func act_swap(target_player: int, card_id: int) -> bool:
 	var taken: Dictionary = q.ingredients[ti]
 	q.ingredients[ti] = p.ingredients[bi]
 	p.ingredients[bi] = taken
-	_log("  Rusty Bauble: %s swaps it for %s's %s" % [p.name, q.name, taken.name])
+	# AP effects move with the card: the taker gains it, the previous owner loses it.
+	var ap_shift := int(def_of(taken).get("ap", 0))
+	p.ap += ap_shift
+	q.ap -= ap_shift
+	var ap_note := "" if ap_shift == 0 else " (AP %+d for %s, %+d for %s)" % [ap_shift, p.name, -ap_shift, q.name]
+	_log("  Rusty Bauble: %s swaps it for %s's %s%s" % [p.name, q.name, taken.name, ap_note])
 	_pending_bauble_id = -1
 	_advance_craft()
 	return true
@@ -582,15 +592,14 @@ func act_reserve(card_id: int) -> bool:
 	if phase != Phase.RESERVE:
 		return false
 	var p := player()
-	if card_id >= 0:
-		var card := {}
-		for c in reservable(current):
-			if c.id == card_id:
-				card = c
-		if card.is_empty():
-			return false
-		p.reserve.append(card)
-		_log("%s reserves %s" % [p.name, card.name])
+	var card := {}
+	for c in reservable(current):  # reserving is required; _next_reserve skips players with no options
+		if c.id == card_id:
+			card = c
+	if card.is_empty():
+		return false
+	p.reserve.append(card)
+	_log("%s reserves %s" % [p.name, card.name])
 	_next_reserve()
 	return true
 
@@ -644,6 +653,7 @@ func _start_quest() -> void:
 		p.passed = false
 		p.ingredients.clear()
 		p.sharpen = 0
+		p.electrum_dice = 0
 		p.reaction_uses.clear()
 		p.penalty.clear()
 		p.carry_raws.clear()

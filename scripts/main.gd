@@ -225,7 +225,6 @@ func _render_actions() -> void:
 			var grid := _grid()
 			for c in game.reservable(game.current):
 				grid.add_child(_card_button(c, func(): game.act_reserve(c.id)))
-			action_box.add_child(_button("Don't reserve", func(): game.act_reserve(-1)))
 
 
 func _render_craft() -> void:

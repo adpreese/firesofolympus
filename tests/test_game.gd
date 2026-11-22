@@ -134,3 +134,53 @@ func test_reserve_persists_and_is_private() -> void:
 			ok(not g.discard.has(c), "reserved card not discarded")
 			eq(g.reserve_options(pi).has(c), true, "owner can draft it")
 			eq(g.reserve_options(1 - pi).has(c), false, "opponent can't")
+
+
+func test_scabbard_dice_are_extra() -> void:
+	var g := _new_game(2, 13)
+	var p = g.players[0]
+	p.ingredients = [_card("Hardened Steel", 1)]
+	g.sharpness_card = {"name": "Razor Mantis", "type": "Demon"}
+	p.penalty = {"dice_loss": 5}
+	p.carry_raws = [6, 6]
+	eq(g.pool_size(0, FoGame.SHARPNESS), {"normal": 2, "magic": 0}, "penalty can't remove kept dice")
+	p.penalty = {}
+	eq(g.pool_size(0, FoGame.SHARPNESS), {"normal": 5, "magic": 0}, "3 + 2 kept")
+
+
+func test_electrum_only_counts_later_sharpening() -> void:
+	var g := _new_game(2, 17)
+	g.players[0].ap = 99
+	g.players[1].ap = 99
+	var me := g.current
+	g.act_sharpen()                       # 1d6, before Electrum
+	var other := g.current
+	g.act_pass()
+	g.market.append(_card("Electrum", 1))
+	ok(g.act_draft(1001), "draft electrum")
+	g.act_sharpen()                       # 2d6 + 1
+	g.strength_card = {"name": "Kraken", "type": "Giant"}
+	eq(g.pool_size(me, FoGame.STRENGTH).normal, 1 + 2 + 1, "only the later sharpening gets +1d6")
+	eq(other == me, false, "turns alternate")
+
+
+func test_bauble_moves_ap_with_card() -> void:
+	var g := _new_game(2, 19)
+	var me := g.current
+	var other := 1 - me
+	g.players[other].ingredients.append(_card("Beeswax", 1))
+	var my_ap: int = g.players[me].ap
+	var their_ap: int = g.players[other].ap
+	g.market.append(_card("Rusty Bauble", 2))
+	g.act_draft(1002)
+	ok(g.act_swap(other, 1001), "swap for Beeswax")
+	eq(g.players[me].ap, my_ap - 1 + 2, "taker gains Beeswax's +2")
+	eq(g.players[other].ap, their_ap - 2, "previous owner loses it")
+
+
+func test_reserve_is_required() -> void:
+	var g := _new_game(2, 23)
+	while g.phase != FoGame.Phase.RESERVE:
+		FoBot.step(g)
+	ok(not g.act_reserve(-1), "can't skip reserving")
+	ok(g.act_reserve(g.reservable(g.current)[0].id), "reserve a card")
