@@ -43,6 +43,11 @@ online multiplayer, and character portraits.
       Measured over 2-player games: Normal beats Easy ~65%, Hard beats Normal ~95%.
 
 ## Milestone 5: Platform & accessibility
-- [ ] iOS: safe areas, touch-sized targets (≥ 44 pt), haptics on roll/draft, app icon and launch screen.
-- [ ] Colourblind-safe die markers: magic and kept dice get a shape or icon, not just colour.
+- [x] iOS: safe areas, touch-sized targets (≥ 44 pt), haptics on roll/draft, app icon and launch screen.
+      Touch targets are 72 px in the 1920x1080 layout, which is 44 pt on an iPad. iPhone landscape
+      shrinks the layout to about 0.36x, too small to play; it needs its own layout, or ship iPad-only
+      (`application/targeted_device_family=1`; it is currently 2 = iPhone & iPad). Icon and splash come from `tools/make_art.gd`.
+      Not yet tried on a device: safe-area insets and haptics.
+- [x] Colourblind-safe die markers: magic and kept dice get a shape or icon, not just colour.
+      Corner symbols: ✓ scores / protects, × triggers the penalty, ◆ magic, ▲ kept (`FoUI.MARK_*`).
 - [x] Text size option and reduced-motion option (landed with the Milestone 3 settings).

@@ -13,6 +13,7 @@ static var music_volume := 0.7
 static var cpu_speed := 1       # index into CPU_SPEEDS
 static var text_size := 0       # index into TEXT_SIZES
 static var reduce_motion := false
+static var haptics := true
 
 
 static func load_file() -> void:
@@ -24,6 +25,7 @@ static func load_file() -> void:
 	cpu_speed = clampi(int(cf.get_value("game", "cpu_speed", cpu_speed)), 0, CPU_SPEEDS.size() - 1)
 	text_size = clampi(int(cf.get_value("display", "text_size", text_size)), 0, TEXT_SIZES.size() - 1)
 	reduce_motion = bool(cf.get_value("display", "reduce_motion", reduce_motion))
+	haptics = bool(cf.get_value("game", "haptics", haptics))
 
 
 static func save_file() -> void:
@@ -33,6 +35,7 @@ static func save_file() -> void:
 	cf.set_value("game", "cpu_speed", cpu_speed)
 	cf.set_value("display", "text_size", text_size)
 	cf.set_value("display", "reduce_motion", reduce_motion)
+	cf.set_value("game", "haptics", haptics)
 	cf.save(PATH)
 
 

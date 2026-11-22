@@ -10,7 +10,7 @@ func test_render_every_phase() -> void:
 		var ui: Control = load("res://scripts/main.gd").new()
 		ui.data = CardData.load_default()
 		ui._show_setup()
-		ui.count_spin.value = 2 + s % 3
+		ui._set_player_count(2 + s % 3)
 		var hotseat := s % 2 == 0
 		for i in ui.seat_rows.size():
 			ui.seat_rows[i][2].button_pressed = not hotseat and i > 0

@@ -19,6 +19,12 @@ const HEADING_FONT := "Cinzel-Bold.ttf"
 const BODY_FONT := "SourceSerif4-Regular.ttf"
 const BOLD_FONT := "SourceSerif4-SemiBold.ttf"
 
+## Die symbols, so meaning never rests on colour alone (Source Serif has these glyphs).
+const MARK_GOOD := "✓"
+const MARK_BAD := "×"
+const MARK_MAGIC := "◆"
+const MARK_KEPT := "▲"
+
 const TILE := Vector2(176, 240)  # market / choice cards
 const MINI := Vector2(84, 104)   # cards on a player's mat
 
@@ -161,21 +167,39 @@ static func card_tile(title: String, body: String, tex: Texture2D, size := TILE,
 	return b
 
 
-## A small round "i" button pinned to a tile's top-right corner.
+## A small round "i" button pinned to a tile's top-right corner. The circle is small, but
+## the tap area is a 72 px square (44 pt on an iPad) so a near miss doesn't hit the tile.
 static func corner_button(parent: Control, text: String) -> Button:
+	var hit := 72
+	var dot_size := 34
 	var i := Button.new()
-	i.text = text
-	i.add_theme_font_size_override("font_size", 16)
-	var r := 16
-	for s in ["normal", "hover", "pressed"]:
-		var st := box(PANEL.darkened(0.3) if s == "normal" else PANEL_LIGHT, GOLD if s != "normal" else EDGE, 1, r, 0)
-		i.add_theme_stylebox_override(s, st)
+	for st in ["normal", "hover", "pressed", "focus", "disabled"]:
+		i.add_theme_stylebox_override(st, StyleBoxEmpty.new())
 	i.anchor_left = 1
 	i.anchor_right = 1
-	i.offset_left = -38
-	i.offset_right = -6
-	i.offset_top = 6
-	i.offset_bottom = 38
+	i.offset_left = -hit
+	i.offset_right = 0
+	i.offset_top = 0
+	i.offset_bottom = hit
+	var dot := Panel.new()
+	dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	dot.position = Vector2(hit - dot_size - 6, 6)
+	dot.size = Vector2(dot_size, dot_size)
+	var idle := box(PANEL.darkened(0.3), EDGE, 1, dot_size / 2, 0)
+	var lit := box(PANEL_LIGHT, GOLD, 1, dot_size / 2, 0)
+	dot.add_theme_stylebox_override("panel", idle)
+	i.mouse_entered.connect(func(): dot.add_theme_stylebox_override("panel", lit))
+	i.mouse_exited.connect(func(): dot.add_theme_stylebox_override("panel", idle))
+	var l := Label.new()
+	l.text = text
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	l.add_theme_font_size_override("font_size", 16)
+	l.add_theme_color_override("font_color", INK)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	l.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dot.add_child(l)
+	i.add_child(dot)
 	parent.add_child(i)
 	return i
 
@@ -204,14 +228,39 @@ static func die_face(value: int, mark: int, magic: bool, carried: bool, size: fl
 	style.shadow_offset = Vector2(0, 3)
 	for state in ["normal", "hover", "pressed", "disabled", "focus"]:
 		b.add_theme_stylebox_override(state, style)
+	var magic_ink := Color(0.1, 0.35, 0.75)
+	var kept_ink := Color(0.6, 0.38, 0.0)
 	var ink := Color(0.15, 0.1, 0.12)
 	if magic:
-		ink = Color(0.1, 0.35, 0.75)
+		ink = magic_ink
 	if carried:
-		ink = Color(0.6, 0.38, 0.0)
+		ink = kept_ink
 	for c in ["font_color", "font_hover_color", "font_pressed_color", "font_disabled_color", "font_focus_color"]:
 		b.add_theme_color_override(c, ink)
+	if mark != 0:
+		_die_badge(b, MARK_GOOD if mark == 1 else MARK_BAD, Color(0.55, 0.38, 0.0) if mark == 1 else Color(0.75, 0.12, 0.1), size, Vector2(1, 0))
+	if magic:
+		_die_badge(b, MARK_MAGIC, magic_ink, size, Vector2(0, 1))
+	if carried:
+		_die_badge(b, MARK_KEPT, kept_ink, size, Vector2(1, 1))
 	return b
+
+
+## A small symbol in a die's corner; corner (0,0) = top-left, (1,1) = bottom-right.
+static func _die_badge(die: Button, text: String, color: Color, size: float, corner: Vector2) -> void:
+	var l := Label.new()
+	l.text = text
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	l.add_theme_font_override("font", FoAssets.font(BOLD_FONT))
+	l.add_theme_font_size_override("font_size", maxi(12, int(size * 0.24)))
+	l.add_theme_color_override("font_color", color)
+	var box_size := size * 0.36
+	var inset := size * 0.06
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	l.size = Vector2(box_size, box_size)
+	l.position = Vector2(inset + corner.x * (size - box_size - 2 * inset), inset + corner.y * (size - box_size - 2 * inset))
+	die.add_child(l)
 
 
 ## `filled` of `total` small squares, e.g. sharpening progress.

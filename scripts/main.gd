@@ -22,11 +22,13 @@ var selected_reaction := ""
 var bot_wait := 0.0
 var cpu: Array = []            # per seat: {} for a human, {level, persona} for a CPU
 var bot_plan: FoBot.Plan       # the CPU decision being thought about
+const TOUCH := 72.0             # minimum tap size: 44 pt on an iPad at this 1920x1080 layout
 const THINK_MS := 10.0         # Hard CPUs think this long per frame so the UI stays smooth
 var autoplay := "--autoplay" in OS.get_cmdline_user_args()
 
 var seat_rows: Array = []  # [seat box, name LineEdit, CPU CheckBox, persona OptionButton, level OptionButton, blurb Label]
-var count_spin: SpinBox
+var player_count := 3            # seats in use on the setup screen
+var count_row: HBoxContainer
 var players_box: VBoxContainer
 var header: VBoxContainer
 var action_box: VBoxContainer
@@ -54,6 +56,7 @@ var tumble_tick := 0.0
 var card_nodes := {}           # card id -> [zone, Control, card name] from the latest render
 var flights := 0               # cards in the air
 
+var board_margin: MarginContainer
 var persist := false           # autosave to FoSave (off for tests and --autoplay)
 var saved := []                # [moves, seen] last written, to skip identical saves
 var resume := []               # [FoGame, seen] from the save file, for the title screen
@@ -68,6 +71,7 @@ func _ready() -> void:
 	persist = not autoplay
 	theme = FoUI.make_theme()
 	_setup_audio()
+	get_viewport().size_changed.connect(_apply_safe_area)
 	data = CardData.load_default()
 	_show_setup()
 	if autoplay:
@@ -75,6 +79,25 @@ func _ready() -> void:
 			row[2].button_pressed = true
 	if autoplay or "--start" in OS.get_cmdline_user_args():
 		_start_game()
+
+
+## Keep the board clear of the notch and home indicator (iOS). Desktop reports the menu bar
+## and dock as unsafe, so insets only apply on mobile.
+func _apply_safe_area() -> void:
+	if board_margin == null:
+		return
+	var insets := [0.0, 0.0, 0.0, 0.0]  # left, top, right, bottom in canvas units
+	if OS.has_feature("mobile") and is_inside_tree():
+		var win := DisplayServer.window_get_size()
+		var safe := DisplayServer.get_display_safe_area()
+		var vp := get_viewport_rect().size
+		if win.x > 0 and win.y > 0 and safe.size.x > 0:
+			var k := Vector2(vp.x / win.x, vp.y / win.y)
+			insets = [safe.position.x * k.x, safe.position.y * k.y,
+				maxf(0, win.x - safe.end.x) * k.x, maxf(0, win.y - safe.end.y) * k.y]
+	var sides := ["left", "top", "right", "bottom"]
+	for i in 4:
+		board_margin.add_theme_constant_override("margin_" + sides[i], 16 + int(insets[i]))
 
 
 func _exit_tree() -> void:
@@ -126,15 +149,20 @@ func _show_setup() -> void:
 	resume = FoSave.read(data) if persist else []
 	_clear(self)
 	add_child(FoUI.background())
+	var scroll := ScrollContainer.new()  # only scrolls with 4 seats + Continue at large text sizes
+	scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	add_child(scroll)
 	var center := CenterContainer.new()
-	center.set_anchors_preset(Control.PRESET_FULL_RECT)
-	add_child(center)
-	var pnl := FoUI.panel(FoUI.box(FoUI.PANEL, FoUI.GOLD, 2, 16, 40))
+	center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	center.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.add_child(center)
+	var pnl := FoUI.panel(FoUI.box(FoUI.PANEL, FoUI.GOLD, 2, 16, 32))
 	center.add_child(pnl)
 	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 16)
+	box.add_theme_constant_override("separation", 12)
 	pnl.add_child(box)
-	var title := FoUI.heading("Fires of Olympus", 72, FoUI.GOLD)
+	var title := FoUI.heading("Fires of Olympus", 64, FoUI.GOLD)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(title)
 	var sub := FoUI.label("Forge a blade from rare Ingredients, then face the monsters of three Quests.", 22, FoUI.MUTED)
@@ -159,12 +187,13 @@ func _show_setup() -> void:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 16)
 	row.add_child(FoUI.heading("Blacksmiths", 24, FoUI.INK, false))
-	count_spin = SpinBox.new()
-	count_spin.min_value = 2
-	count_spin.max_value = MAX_PLAYERS
-	count_spin.value = 3
-	count_spin.value_changed.connect(func(_v): _update_seats())
-	row.add_child(count_spin)
+	count_row = _choice(range(2, MAX_PLAYERS + 1).map(func(n): return str(n)), player_count - 2, func(i): _set_player_count(i + 2))
+	row.add_child(count_row)
+	var gap := Control.new()
+	gap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(gap)
+	row.add_child(_button("Settings", func(): _open_menu("settings")))
+	row.add_child(_button("How to play", func(): _open_menu("rules")))
 	box.add_child(row)
 	seat_rows.clear()
 	for i in MAX_PLAYERS:
@@ -173,19 +202,20 @@ func _show_setup() -> void:
 		var r := HBoxContainer.new()
 		r.add_theme_constant_override("separation", 12)
 		var name_edit := LineEdit.new()
-		name_edit.custom_minimum_size.x = 300
+		name_edit.custom_minimum_size = Vector2(300, TOUCH)
 		var is_cpu := CheckBox.new()
 		is_cpu.text = "CPU"
+		is_cpu.custom_minimum_size.y = TOUCH
 		var persona := OptionButton.new()
 		for pd in FoBot.PERSONAS:
 			persona.add_item(pd.name)
 		persona.select(i % FoBot.PERSONAS.size())
-		persona.custom_minimum_size.x = 190
+		persona.custom_minimum_size = Vector2(190, TOUCH)
 		var level := OptionButton.new()
 		for l in FoBot.LEVELS:
 			level.add_item(l)
 		level.select(FoBot.Level.NORMAL)
-		level.custom_minimum_size.x = 150
+		level.custom_minimum_size = Vector2(150, TOUCH)
 		var blurb := FoUI.label("", 16, FoUI.MUTED, false)
 		r.add_child(name_edit)
 		r.add_child(is_cpu)
@@ -199,11 +229,6 @@ func _show_setup() -> void:
 		is_cpu.toggled.connect(func(_on): _update_seat(i, true))
 		persona.item_selected.connect(func(_idx): _update_seat(i, true))
 		_update_seat(i, true)
-	var options := HBoxContainer.new()
-	options.add_theme_constant_override("separation", 12)
-	options.add_child(_button("Settings", func(): _open_menu("settings")))
-	options.add_child(_button("How to play", func(): _open_menu("rules")))
-	box.add_child(options)
 	box.add_child(_title_button("Begin the Quests", _start_game))
 	if not resume.is_empty():
 		var note := FoUI.label("Beginning a new game replaces the saved one.", 18, FoUI.MUTED)
@@ -215,15 +240,22 @@ func _show_setup() -> void:
 
 func _title_button(text: String, f: Callable) -> Button:
 	var b := _button(text, f)
-	b.custom_minimum_size.y = 64
+	b.custom_minimum_size.y = TOUCH
 	b.add_theme_font_override("font", FoAssets.font(FoUI.HEADING_FONT))
 	b.add_theme_font_size_override("font_size", FoUI.fs(28))
 	return b
 
 
+func _set_player_count(n: int) -> void:
+	player_count = clampi(n, 2, MAX_PLAYERS)
+	if count_row != null:
+		count_row.get_child(player_count - 2).button_pressed = true
+	_update_seats()
+
+
 func _update_seats() -> void:
 	for i in seat_rows.size():
-		seat_rows[i][0].visible = i < int(count_spin.value)
+		seat_rows[i][0].visible = i < player_count
 
 
 ## Show or hide a seat's CPU options. rename: swap a default name for the persona's name (or back).
@@ -245,7 +277,7 @@ func _start_game() -> void:
 	var names := []
 	var bots := []
 	var cpus := []
-	for i in int(count_spin.value):
+	for i in player_count:
 		var row: Array = seat_rows[i]
 		var n: String = row[1].text.strip_edges()
 		names.append(n if n != "" else "Player %d" % (i + 1))
@@ -296,8 +328,8 @@ func _build_board() -> void:
 	add_child(FoUI.background())
 	var margin := MarginContainer.new()
 	margin.set_anchors_preset(Control.PRESET_FULL_RECT)
-	for side in ["left", "right", "top", "bottom"]:
-		margin.add_theme_constant_override("margin_" + side, 16)
+	board_margin = margin
+	_apply_safe_area()
 	add_child(margin)
 	var root := HBoxContainer.new()
 	root.add_theme_constant_override("separation", 18)
@@ -389,7 +421,7 @@ func _render_header() -> void:
 	top.add_child(gap)
 	var menu_button := Button.new()
 	menu_button.text = "Menu"
-	menu_button.custom_minimum_size = Vector2(120, 48)
+	menu_button.custom_minimum_size = Vector2(140, TOUCH)
 	menu_button.pressed.connect(func():
 		_play("click")
 		_open_menu("pause"))
@@ -664,7 +696,7 @@ func _render_dice(clickable: bool) -> void:
 	action_box.add_child(row)
 	if tumbling:
 		return
-	var legend := _marks_legend(marks, game.challenge_kind)
+	var legend := _marks_legend(marks, game.challenge_kind, p.dice)
 	if legend != "":
 		action_box.add_child(FoUI.label(legend, 16, FoUI.MUTED))
 	if clickable:
@@ -837,6 +869,7 @@ func _challenge_results(entry: Dictionary) -> Control:
 	rows.add_theme_constant_override("separation", 18)
 	scroll.add_child(rows)
 	var all_marks: Array[int] = []
+	var all_dice := []
 	for r in entry.rows:
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 16)
@@ -851,7 +884,8 @@ func _challenge_results(entry: Dictionary) -> Control:
 		row.add_child(dice)
 		for d in r.dice:
 			all_marks.append(d.mark)
-			var b := FoUI.die_face(d.value, d.mark, d.magic, d.carried, 56)
+			all_dice.append(d)
+			var b := FoUI.die_face(d.value, d.mark, d.magic, d.carried, 64)
 			var steps: Array = d.steps
 			var player_name: String = game.players[r.player].name
 			b.pressed.connect(func():
@@ -870,7 +904,7 @@ func _challenge_results(entry: Dictionary) -> Control:
 		var res := FoUI.label(outcome, 22, color)
 		res.custom_minimum_size.x = 420
 		row.add_child(res)
-	var legend := _marks_legend(all_marks, entry.kind)
+	var legend := _marks_legend(all_marks, entry.kind, all_dice)
 	if legend != "":
 		box.add_child(FoUI.label(legend, 16, FoUI.MUTED))
 	results_detail = FoUI.label("Tap a die to see how its value was worked out.", 18, FoUI.MUTED)
@@ -912,12 +946,17 @@ func _dismiss_results() -> void:
 		results_queue.pop_front()
 
 
-func _marks_legend(marks: Array[int], kind: String) -> String:
+## Explains the die symbols on show. `dice`: FoGame.Die objects or history dice dicts.
+func _marks_legend(marks: Array[int], kind: String, dice: Array) -> String:
 	var parts := PackedStringArray()
 	if 1 in marks:
-		parts.append("Gold border: " + ("scores a Success" if kind == FoGame.SHARPNESS else "protects you from the penalty"))
+		parts.append("%s Gold border: %s" % [FoUI.MARK_GOOD, "scores a Success" if kind == FoGame.SHARPNESS else "protects you from the penalty"])
 	if -1 in marks:
-		parts.append("Red border: triggers the penalty")
+		parts.append("%s Red border: triggers the penalty" % FoUI.MARK_BAD)
+	if dice.any(func(d): return d.magic):
+		parts.append("%s Magic die (Sphinx's Milk)" % FoUI.MARK_MAGIC)
+	if dice.any(func(d): return d.carried):
+		parts.append("%s %s" % [FoUI.MARK_KEPT, "Kept for Sharpness (Jeweled Scabbard)" if kind == FoGame.STRENGTH else "Kept from Strength (Jeweled Scabbard)"])
 	return "   ".join(parts)
 
 
@@ -1099,6 +1138,10 @@ func _settings_panel() -> Control:
 		FoSettings.reduce_motion = on
 		_save_settings())
 	_setting_row(grid, "Reduce motion", motion)
+	if OS.has_feature("mobile") or DisplayServer.is_touchscreen_available():
+		_setting_row(grid, "Haptics", _toggle("Vibrate on rolls and drafts", FoSettings.haptics, func(on):
+			FoSettings.haptics = on
+			_save_settings()))
 	box.add_child(_big_button("Done", _close_menu))
 	return pb[0]
 
@@ -1137,7 +1180,7 @@ func _choice(options: Array, selected: int, f: Callable) -> HBoxContainer:
 		b.toggle_mode = true
 		b.button_group = group
 		b.button_pressed = i == selected
-		b.custom_minimum_size = Vector2(132, 48)
+		b.custom_minimum_size = Vector2(maxf(TOUCH, 132 if options[i].length() > 2 else 0), TOUCH)
 		b.pressed.connect(func():
 			_play("toggle")
 			f.call(i)
@@ -1154,10 +1197,8 @@ func _apply_text_size() -> void:
 		return
 	var page := menu
 	var back := menu_back
-	var count := count_spin.value
 	var seats := seat_rows.map(func(r): return [r[1].text, r[2].button_pressed, r[3].selected, r[4].selected])
 	_show_setup()
-	count_spin.value = count
 	for i in seats.size():
 		seat_rows[i][2].button_pressed = seats[i][1]
 		seat_rows[i][3].select(seats[i][2])
@@ -1286,6 +1327,7 @@ func _act(f: Callable) -> void:
 func _button(text: String, f: Callable, click_sound := true) -> Button:
 	var b := Button.new()
 	b.text = text
+	b.custom_minimum_size.y = TOUCH
 	b.pressed.connect(func():
 		if click_sound:
 			_play("click")
@@ -1295,7 +1337,7 @@ func _button(text: String, f: Callable, click_sound := true) -> Button:
 
 func _big_button(text: String, f: Callable) -> Button:
 	var b := _button(text, f)
-	b.custom_minimum_size = Vector2(220, 60)
+	b.custom_minimum_size = Vector2(220, TOUCH)
 	b.add_theme_font_size_override("font_size", FoUI.fs(24))
 	return b
 
@@ -1386,6 +1428,12 @@ func _update_music() -> void:
 		music.stop()
 
 
+## A short buzz on phones and tablets (iOS uses the Taptic Engine).
+func _haptic(ms: int) -> void:
+	if FoSettings.haptics and OS.has_feature("mobile") and not autoplay and is_inside_tree():
+		Input.vibrate_handheld(ms, 0.5)
+
+
 func _play(event: String) -> void:
 	_play_file(FoAssets.sfx_path(event), FoAssets.SFX[event][1])
 
@@ -1427,6 +1475,7 @@ func _play_events() -> void:
 	if now.phase == FoGame.Phase.GAME_OVER:
 		if was.phase != FoGame.Phase.GAME_OVER:
 			_play("game_over")
+			_haptic(80)
 		return
 	if now.quest != was.quest:
 		_play("quest_end")
@@ -1434,15 +1483,18 @@ func _play_events() -> void:
 		var cards: Array = now.ingredients[pi]
 		if cards.size() > was.ingredients[pi].size():
 			_play_file(FoAssets.ingredient_sound_path(cards[-1]), 0.6)
+			_haptic(20)
 		if now.sharpen[pi] > was.sharpen[pi]:
 			_play("sharpen")
 		if now.reserve[pi] > was.reserve[pi]:
 			_play("reserve")
+			_haptic(20)
 	if now.phase == FoGame.Phase.REACT:
 		if was.phase != FoGame.Phase.REACT or was.kind != now.kind:
 			_play("challenge")
 		if was.phase != FoGame.Phase.REACT or was.kind != now.kind or was.current != now.current:
 			_play("roll")
+			_haptic(40)
 			if _animate():
 				tumble_left = TUMBLE_TIME
 				tumble_tick = 0.0

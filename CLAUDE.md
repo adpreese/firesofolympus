@@ -49,6 +49,10 @@ Targets: Web (primary for playtesting) and iOS. Landscape 1920x1080 base, `canva
 - `scripts/assets.gd` (FoAssets) — maps CSV art names / card names / game events to files in `assets/`
   (`ART_ALIASES` for renamed images, `MISSING_ART` for cards with no image yet, `INGREDIENT_SOUNDS`, `SFX`).
   Pixel art is nearest-upscaled at load. Web export excludes the duplicate music `.ogg`.
+- `tools/make_art.gd` — regenerates `icon.png` (App Store icon, no alpha) and `assets/splash.png`
+  (boot splash / iOS launch image): `godot --headless --script res://tools/make_art.gd`
+- Touch: interactive controls are at least `TOUCH` (72 px = 44 pt on iPad) in main.gd; iOS safe-area
+  insets go on the board margin (`_apply_safe_area`, mobile only).
 - `tests/` — tiny built-in runner (`run_tests.gd`), no addons
 
 ## Conventions
