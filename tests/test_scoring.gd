@@ -48,3 +48,23 @@ func test_die_marks() -> void:
 			if card in ["Vampire Bat", "Killer Bee"]:
 				n *= 2
 			eq(marked, n, "%s %s" % [card, str(vals)])
+
+
+func test_fiery_salamander_boon() -> void:
+	eq(Scoring.strength_penalty("Fiery Salamander", [3, 5, 4, 1]).get("free_six", 0), 1, "3,4,5 straight")
+	eq(Scoring.strength_penalty("Fiery Salamander", [6, 7, 8]).get("free_six", 0), 1, "straight above 6")
+	eq(Scoring.strength_penalty("Fiery Salamander", [1, 2, 4, 5]).get("free_six", 0), 0, "no straight")
+	eq(Scoring.strength_penalty("Fiery Salamander", [1, 2, 3], 1).get("free_six", 0), 1, "Kraken Blood can't take a boon")
+	ok(Scoring.penalty_cost({"free_six": 1}) < 0, "a boon has negative cost")
+	eq(Scoring.describe_penalty({"free_six": 1}), "a free 6 on Sharpness", "boon text")
+	eq(Scoring.die_marks("Fiery Salamander", [5, 3, 4, 4]), [1, 1, 1, 0] as Array[int], "marks one die of each value")
+
+
+func test_auto_penalty() -> void:
+	eq(Scoring.strength_penalty("Golem", [4, 5], 1).die_mod, -1, "golem: one more 1")
+	eq(Scoring.strength_penalty("Phantasm", [1, 5], 1).dice_loss, 2, "phantasm stacks")
+	eq(Scoring.strength_penalty("Razorback Turtle", [4], 1).cap, 5, "turtle")
+	eq(Scoring.strength_penalty("Mimic", [3], 1).dice_loss, 2, "mimic: one more odd")
+	eq(Scoring.strength_penalty("Kraken", [6, 6, 6, 6], 1).dice_loss, 1, "kraken penalty regardless")
+	eq(Scoring.strength_penalty("Kraken", [1], 1).dice_loss, 1, "kraken doesn't double")
+	eq(Scoring.strength_penalty("Giant Crab", [2, 2, 2], 1).dice_loss, 2, "crab regardless")

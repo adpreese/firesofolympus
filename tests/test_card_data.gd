@@ -4,9 +4,9 @@ extends "res://tests/test_case.gd"
 func test_csvs_load_and_match_definitions() -> void:
 	var d := CardData.load_default()
 	eq(d.errors, PackedStringArray(), "card data errors")
-	eq(d.ingredients.size(), 25, "ingredient count")
-	eq(d.challenges.size(), 14, "challenge count")
-	eq(d.challenges.filter(func(c): return c.kind == "Strength").size(), 7, "strength challenges")
+	eq(d.ingredients.size(), 36, "ingredient count")
+	eq(d.challenges.size(), 15, "challenge count")
+	eq(d.challenges.filter(func(c): return c.kind == "Strength").size(), 8, "strength challenges")
 	eq(d.challenges.filter(func(c): return c.kind == "Sharpness").size(), 7, "sharpness challenges")
 
 

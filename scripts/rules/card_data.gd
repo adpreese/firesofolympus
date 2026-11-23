@@ -25,8 +25,15 @@ const MONSTER_TYPES := ["Elemental", "Demon", "Giant"]
 ##   skip_strength: bool  skip the Strength Challenge this Quest
 ##   swap_on_draft: bool  Rusty Bauble swap
 ##   gamble: bool         Gambler's Charm wager
-##   reactions: [{kind: reroll|plus_one|keep, uses, scope: challenge|quest|quest_once,
-##                vs?: monster type, challenge?: Strength|Sharpness}]
+##   sharpened_dice: int  extra d6 once you've sharpened at least once this Quest (Orichalcum)
+##   combo: name, combo_dice: int   extra d6 while you also hold Ingredient `combo` (Stygian Oil)
+##   whetstone: bool      Sharpness: rolled 1s are rerolled once, automatically
+##   ignore_34: bool      Sharpness: final results of 3 or 4 don't count for Successes
+##   no_reserve: bool     can't be reserved (Lightning Bolt)
+##   auto_penalty: int    extra Strength penalties taken automatically (Kraken Blood)
+##   reactions: [{kind: reroll|plus_one|keep|copy, uses, scope: challenge|quest|quest_once,
+##                vs?: monster type, challenge?: Strength|Sharpness, needs?: Ingredient you must
+##                also hold, uses_from?: unused_ap|strength_sixes (replaces `uses`)}]
 const DEFS := {
 	"Gold": {"vs": {"Elemental": 1}, "reactions": [{"kind": "reroll", "uses": 1, "scope": "challenge"}]},
 	"Hardened Steel": {"dice": 3},
@@ -53,6 +60,17 @@ const DEFS := {
 	"Beeswax": {"dice": -1, "ap": 2},
 	"Lucky Fish Scale": {"dice": -2, "bonus_success": 1},
 	"Gambler's Charm": {"dice": 1, "gamble": true},
+	"Phoenix Egg": {"dice": 2, "reactions": [{"kind": "keep", "uses": 1, "scope": "challenge", "challenge": "Strength"}]},
+	"Dwarven Whetstone": {"whetstone": true},
+	"Magic Mirror": {"reactions": [{"kind": "copy", "uses": 1, "scope": "challenge", "challenge": "Sharpness"}]},
+	"Orichalcum": {"dice": 1, "sharpened_dice": 1},
+	"Blood Ruby": {"reactions": [{"kind": "reroll", "uses_from": "unused_ap", "scope": "challenge"}]},
+	"Branch of Yggdrasil": {"reactions": [{"kind": "reroll", "uses_from": "strength_sixes", "scope": "challenge", "challenge": "Sharpness"}]},
+	"Lightning Bolt": {"dice": 3, "no_reserve": true},
+	"Kraken Blood": {"dice": 3, "auto_penalty": 1},
+	"Celestial Ore": {"magic": 2, "ignore_34": true},
+	"Stygian Oil": {"dice": 1, "combo": "Shadow Essence", "combo_dice": 2},
+	"Shadow Essence": {"dice": 1, "reactions": [{"kind": "reroll", "uses": 1, "scope": "challenge", "needs": "Stygian Oil"}]},
 }
 
 var ingredients: Array = []  # {name, text, art, def}

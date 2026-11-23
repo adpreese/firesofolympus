@@ -50,3 +50,21 @@ Lucky Fish Scale,"-2D6
 Modifier:  +1 Success on Sharpness Challenge",19_GreenFishScale.png
 Gambler's Charm,"+1D6 
 Wager a Success",27_Treasure_B.png
+Phoenix Egg,"+2D6
+Reaction: Keep 1 roll between Challenges",30_PhoenixEgg.png
+Dwarven Whetstone,Effect: Reroll all 1s on Sharpness Challenge,28_Whetstone.png
+Magic Mirror,Reaction: Copy 1 die on Sharpness Challenge,Iron_Shield3.png
+Orichalcum,"+1D6
++2D6 if you've sharpened at least once",32_MithrilChain.png
+Blood Ruby,Reaction: Each unused AP lets you reroll once per Challenge,09_Gem_Ruby.png
+Branch of Yggdrasil,Each 6 or above on your Strength Challenge gives you a reroll in Sharpness Challenge,02_Birch_Branch_Leaf.png
+Lightning Bolt,"+3D6
+Cannot be Retained",474_Lightning_Thunder.png
+Kraken Blood,"+3D6
+Automatically take one penalty from Strength Challenge",26_KrakenBlood.png
+Celestial Ore,"+2 Magic Dice
+Ignores 3s and 4s on Sharpness Challenge",Fateful_Shield3.png
+Stygian Oil,"+1D6
++3D6 if Shadow Essence also drafted",33_BlackOil.png
+Shadow Essence,"+1D6
+Reaction: Reroll 1 die per Challenge with Stygian Oil also drafted",495_Darkness_Blasphemy.png

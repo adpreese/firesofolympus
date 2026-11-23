@@ -17,6 +17,8 @@ Targets: Web (primary for playtesting) and iOS. Landscape 1920x1080 base, `canva
 - `tools/build.sh ios`    — Xcode project in `build/ios/`; open it in Xcode to sign and run
 - `tools/build.sh sim`    — build + install + launch on an iPad Simulator (no signing needed; uses the x86_64 sim slice under Rosetta)
 - Add `debug` as a 2nd arg for debug builds.
+- `tools/simulate.sh [GAMES] [opts]` — parallel all-CPU (Hard) games -> `build/sim/<run>/part*.jsonl` + `report.md`
+  (`tools/analyze_sim.py`); resumable. `--variant a,b` tests rule variants (`FoGame.VARIANTS`).
 - `godot -- --start` launches straight into a game (seat 1 human); `godot --headless -- --autoplay` plays an all-CPU game and quits (UI smoke test).
 - iOS export needs `application/app_store_team_id` set in `export_presets.cfg` (currently blank).
 

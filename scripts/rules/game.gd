@@ -19,7 +19,9 @@ class Die:
 	var raw: int
 	var magic: bool
 	var bonus := 0         # from +1 Reactions
-	var carried := false   # Strength: marked to keep (Jeweled Scabbard); Sharpness: was kept
+	var carried := false   # Strength: marked to keep (Jeweled Scabbard, Phoenix Egg); Sharpness: was kept
+	var kept_by := ""      # Strength: the reaction key that marked it, refunded if un-kept
+	var origin := ""       # breakdown label when not a plain roll, e.g. "Copied (Magic Mirror)"
 
 	func _init(r: int, m := false) -> void:
 		raw = r
@@ -40,7 +42,8 @@ class Player:
 	var electrum_dice := 0         # extra dice from sharpening while holding Electrum
 	var reaction_uses := {}        # "card_id:index" -> uses left
 	var penalty := {}              # from the Strength Challenge, applied to Sharpness
-	var carry_raws: Array = []     # Jeweled Scabbard dice kept for Sharpness
+	var kept_dice: Array = []      # Jeweled Scabbard dice kept for Sharpness: [raw, magic]
+	var strength_sixes := 0        # final results >= 6 in this Quest's Strength (Branch of Yggdrasil)
 	var wager := false
 	var wager_decided := false
 	var dice: Array = []           # Array of Die for the Challenge being rolled
@@ -62,13 +65,16 @@ class Player:
 		p.electrum_dice = electrum_dice
 		p.reaction_uses = reaction_uses.duplicate()
 		p.penalty = penalty.duplicate()
-		p.carry_raws = carry_raws.duplicate()
+		p.kept_dice = kept_dice.duplicate()
+		p.strength_sixes = strength_sixes
 		p.wager = wager
 		p.wager_decided = wager_decided
 		for d in dice:
 			var c := Die.new(d.raw, d.magic)
 			c.bonus = d.bonus
 			c.carried = d.carried
+			c.kept_by = d.kept_by
+			c.origin = d.origin
 			p.dice.append(c)
 		p.quest_score = quest_score
 		return p
@@ -101,6 +107,27 @@ var moves: Array = []
 var seed_value := 0
 ## Simulation copies (see `clone`) skip the log and results-screen bookkeeping.
 var quiet := false
+## Optional rule variants for balance testing (tools/simulate.gd --variant), off in normal play
+## and not saved. Set before `setup`. Keys:
+##   no_leader_reserve: whoever leads in total Successes after Quest 2 (every tied leader)
+##     doesn't reserve an Ingredient for Quest 3.
+##   no_leader_reserve_always: the same after Quest 1 too, so the leader at each reserve skips it.
+##   q3_extra_draw: Quest 3 draws 5 Ingredients per Blacksmith instead of 4. At 4 players the
+##     original 25-card deck couldn't cover that once 8 cards were reserved, so Q3_DUPES (average cards by
+##     simulated win rate) get a second copy shuffled into the deck when Quest 3 starts.
+##   q3_trailer_ap: in Quest 3, everyone except the leader in total Successes (every tied
+##     leader) starts with +1 AP.
+##   olive_bough: adds Olive Bough (VARIANT_CARDS) to the deck.
+## Variants combine: --variant no_leader_reserve,q3_extra_draw.
+const VARIANTS := ["no_leader_reserve", "no_leader_reserve_always", "q3_extra_draw", "q3_trailer_ap", "olive_bough"]
+var variants := {}
+const Q3_DUPES := ["Gold", "Holy Water", "Beeswax"]
+## Trial Ingredients that aren't in the CSV yet. `tiebreak`: if tied for the most Successes when
+## the game ends while it's in your Quest 3 weapon, you win.
+const VARIANT_CARDS := {
+	"Olive Bough": {"text": "+1D6\nIf you're tied for the most Successes at the end of the game, you win.",
+		"def": {"dice": 1, "tiebreak": true}},
+}
 
 var _turn_step := -1
 var _challenge_pos := -1
@@ -124,6 +151,9 @@ func setup(names: Array, bots: Array, seed_in: int) -> void:
 	discard.clear()
 	for i in data.ingredients.size():
 		deck.append({"id": i, "name": data.ingredients[i].name})
+	if variants.has("olive_bough"):
+		var id := data.ingredients.size() + Q3_DUPES.size() + VARIANT_CARDS.keys().find("Olive Bough")
+		deck.append({"id": id, "name": "Olive Bough"})
 	_shuffle(deck)
 	strength_deck = data.challenges.filter(func(c): return c.kind == STRENGTH)
 	sharpness_deck = data.challenges.filter(func(c): return c.kind == SHARPNESS)
@@ -140,11 +170,25 @@ func player() -> Player:
 
 
 func def_of(card: Dictionary) -> Dictionary:
+	if VARIANT_CARDS.has(card.name):
+		return VARIANT_CARDS[card.name].def
 	return data.def(card.name)
 
 
 func text_of(card: Dictionary) -> String:
+	if VARIANT_CARDS.has(card.name):
+		return VARIANT_CARDS[card.name].text
 	return data.ingredient(card.name).get("text", "")
+
+
+## Name for a card id. Ids past the CSV rows are variant cards: Q3_DUPES, then VARIANT_CARDS.
+func card_name(id: int) -> String:
+	var n := data.ingredients.size()
+	if id < n:
+		return data.ingredients[id].name
+	if id < n + Q3_DUPES.size():
+		return Q3_DUPES[id - n]
+	return VARIANT_CARDS.keys()[id - n - Q3_DUPES.size()]
 
 
 ## Sum of a definition key over a player's current Ingredients (bools count as 1).
@@ -164,6 +208,25 @@ func in_reserve(pi: int, card_id: int) -> bool:
 		if c.id == card_id:
 			return true
 	return false
+
+
+## Whether the player has an Ingredient with this name in this Quest's weapon.
+func holds_name(pi: int, card_name: String) -> bool:
+	for c in players[pi].ingredients:
+		if c.name == card_name:
+			return true
+	return false
+
+
+## Uses a Reaction starts each Challenge (or Quest) with. Most are printed on the card;
+## Blood Ruby counts unused AP and Branch of Yggdrasil counts Strength results of 6+.
+func reaction_max(pi: int, r: Dictionary) -> int:
+	match r.get("uses_from", ""):
+		"unused_ap":
+			return maxi(0, players[pi].ap)
+		"strength_sixes":
+			return players[pi].strength_sixes
+	return int(r.get("uses", 0))
 
 
 func _holds(pi: int, card_id: int) -> bool:
@@ -186,6 +249,51 @@ func reserve_options(pi: int) -> Array:
 	return players[pi].reserve.filter(func(c): return not _holds(pi, c.id))
 
 
+## The crafting turns coming up, current player first: [{player, round}] for at most `count`
+## turns. Follows the snake draft and each player's remaining AP (every action costs 1), so
+## it's the longest the queue can be: passing early shortens it. Empty outside crafting.
+func craft_queue(count: int) -> Array:
+	var out := []
+	if not phase in [Phase.CRAFT, Phase.SWAP] or order.is_empty():
+		return out
+	var n := players.size()
+	var ap := {}
+	for pi in n:
+		ap[pi] = 0 if players[pi].passed else players[pi].ap
+	@warning_ignore("integer_division")
+	out.append({"player": current, "round": _turn_step / n})
+	if phase == Phase.CRAFT:
+		ap[current] -= 1  # the turn being taken (a SWAP's AP is already spent)
+	var step := _turn_step
+	while out.size() < count:
+		if ap.values().all(func(a): return a <= 0):
+			break
+		step += 1
+		@warning_ignore("integer_division")
+		var rnd := step / n
+		var pos := step % n
+		var pi: int = order[pos] if rnd % 2 == 0 else order[n - 1 - pos]
+		if ap[pi] <= 0:
+			continue
+		ap[pi] -= 1
+		out.append({"player": pi, "round": rnd})
+	return out
+
+
+## "reroll", "plus_one", "keep" or "copy" for a Reaction key from `available_reactions`.
+func reaction_kind(key: String) -> String:
+	var parts := key.split(":")
+	if parts.size() != 2:
+		return ""
+	for p in players:
+		for c in p.ingredients:
+			if str(c.id) == parts[0]:
+				var rs: Array = def_of(c).get("reactions", [])
+				var j := int(parts[1])
+				return rs[j].kind if j < rs.size() else ""
+	return ""
+
+
 func has_craft_options(pi: int) -> bool:
 	return not market.is_empty() or not reserve_options(pi).is_empty() or can_sharpen(pi)
 
@@ -203,6 +311,10 @@ func pool_size(pi: int, kind: String) -> Dictionary:
 		magic += int(d.get("magic", 0))
 		if d.get("hyacinth", false):
 			normal += p.ingredients.size() - 1
+		if p.sharpen > 0:
+			normal += int(d.get("sharpened_dice", 0))
+		if d.has("combo") and holds_name(pi, d.combo):
+			normal += int(d.combo_dice)
 	for i in p.sharpen:
 		normal += SHARPEN_DICE[i]
 	normal += p.electrum_dice
@@ -211,8 +323,8 @@ func pool_size(pi: int, kind: String) -> Dictionary:
 	if normal < 0:  # penalties eat normal dice first, then magic ones
 		magic = maxi(0, magic + normal)
 		normal = 0
-	if kind == SHARPNESS:  # Jeweled Scabbard dice are extra, after penalties
-		normal += p.carry_raws.size()
+	if kind == SHARPNESS:  # kept dice and the Salamander's 6 are extra, after penalties
+		normal += p.kept_dice.size() + int(p.penalty.get("free_six", 0))
 	return {"normal": normal, "magic": magic}
 
 
@@ -235,7 +347,11 @@ func _die_calc(pi: int, die: Die, kind: String, steps) -> int:
 	var p: Player = players[pi]
 	var v := die.raw
 	if steps != null:
-		var src := "Kept from Strength (Jeweled Scabbard), rolled" if die.carried and kind == SHARPNESS else "Rolled"
+		var src := "Rolled"
+		if die.origin != "":
+			src = die.origin
+		elif die.carried and kind == SHARPNESS:
+			src = "Kept from Strength, rolled"
 		steps.append({"text": "%s %d" % [src, v], "value": v})
 	if die.magic:
 		v = 5 if v <= 3 else 6
@@ -275,6 +391,8 @@ func _die_calc(pi: int, die: Die, kind: String, steps) -> int:
 		v = penalty.cap
 		if steps != null:
 			steps.append({"text": "Capped at %d (%s penalty)" % [penalty.cap, strength_card.get("name", "Strength")], "value": v})
+	if steps != null and kind == SHARPNESS and (v == 3 or v == 4) and flag_sum(pi, "ignore_34") > 0:
+		steps.append({"text": "Doesn't count for Successes (Celestial Ore ignores 3s and 4s)", "value": v})
 	return v
 
 
@@ -294,7 +412,7 @@ func evaluate(pi: int, kind: String) -> Dictionary:
 func evaluate_values(pi: int, kind: String, vals: Array) -> Dictionary:
 	var card := challenge_card(kind)
 	if kind == STRENGTH:
-		return Scoring.strength_penalty(card.name, vals)
+		return Scoring.strength_penalty(card.name, vals, flag_sum(pi, "auto_penalty"))
 	var s := 0
 	for part in success_parts(pi, vals):
 		s += part[1]
@@ -304,6 +422,7 @@ func evaluate_values(pi: int, kind: String, vals: Array) -> Dictionary:
 ## Where Sharpness Successes come from: [[source, n]] (before any Gambler's Charm wager).
 ## The Challenge card is always listed first, even at 0.
 func success_parts(pi: int, vals: Array) -> Array:
+	vals = counted(pi, vals)
 	var card := challenge_card(SHARPNESS)
 	var out := [[card.name, Scoring.sharpness_successes(card.name, vals)]]
 	var sixes := 0
@@ -319,10 +438,30 @@ func success_parts(pi: int, vals: Array) -> Array:
 	return out
 
 
+## Sharpness results that count for Successes: all of them, unless Celestial Ore drops 3s and 4s.
+func counted(pi: int, vals: Array) -> Array:
+	if flag_sum(pi, "ignore_34") == 0:
+		return vals
+	return vals.filter(func(v): return v != 3 and v != 4)
+
+
 ## Per die, for the UI: 1 = scores (or saves you from a penalty), -1 = triggers a penalty, 0 = neither.
 func die_marks(pi: int, kind: String) -> Array[int]:
 	var vals := values(pi, kind)
-	var marks := Scoring.die_marks(challenge_card(kind).name, vals)
+	var marks: Array[int]
+	if kind == SHARPNESS and flag_sum(pi, "ignore_34") > 0:  # mark only the dice that count
+		var idx := []
+		var kept := []
+		for i in vals.size():
+			if vals[i] != 3 and vals[i] != 4:
+				idx.append(i)
+				kept.append(vals[i])
+		var sub := Scoring.die_marks(challenge_card(kind).name, kept)
+		marks.resize(vals.size())
+		for j in idx.size():
+			marks[idx[j]] = sub[j]
+	else:
+		marks = Scoring.die_marks(challenge_card(kind).name, vals)
 	if kind == SHARPNESS and flag_sum(pi, "mithril") > 0:
 		for i in vals.size():
 			if vals[i] >= 6:
@@ -381,8 +520,10 @@ func available_reactions(pi: int) -> Array:
 				continue
 			if r.has("vs") and r.vs != ctype:
 				continue
+			if r.has("needs") and not holds_name(pi, r.needs):
+				continue
 			var key := "%d:%d" % [c.id, j]
-			var left: int = p.reaction_uses.get(key, r.uses)
+			var left: int = p.reaction_uses.get(key, reaction_max(pi, r))
 			if left <= 0 and r.kind != "keep":  # keep stays listed so dice can be un-kept
 				continue
 			out.append({"key": key, "card": c.name, "kind": r.kind, "left": left})
@@ -401,7 +542,10 @@ func swap_targets(pi: int) -> Array:
 
 
 func reservable(pi: int) -> Array:
-	return players[pi].ingredients.filter(func(c): return not in_reserve(pi, c.id))
+	if _leader_skips_reserve(pi):
+		return []
+	return players[pi].ingredients.filter(func(c):
+		return not in_reserve(pi, c.id) and not def_of(c).get("no_reserve", false))
 
 
 func winners() -> Array[int]:
@@ -412,6 +556,13 @@ func winners() -> Array[int]:
 	for i in players.size():
 		if players[i].total == best:
 			out.append(i)
+	if phase == Phase.GAME_OVER and out.size() > 1:  # Olive Bough breaks a final tie
+		var holders: Array[int] = []
+		for i in out:
+			if flag_sum(i, "tiebreak") > 0:
+				holders.append(i)
+		if holders.size() == 1:
+			return holders
 	return out
 
 
@@ -423,6 +574,7 @@ func winners() -> Array[int]:
 func clone() -> FoGame:
 	var g := FoGame.new(data)
 	g.quiet = true
+	g.variants = variants
 	g.rng.seed = rng.seed
 	g.rng.state = rng.state
 	for p in players:
@@ -634,16 +786,26 @@ func apply_reaction(key: String, die_idx: int) -> bool:
 	match r.kind:
 		"reroll":
 			die.raw = _d6()
+			if not die.origin.begins_with("Copied"):
+				die.origin = ""  # it's an ordinary roll now
 			_log("  %s rerolls a %d -> %d (%s)" % [p.name, before, die_value(current, die, challenge_kind), r.card])
 		"plus_one":
 			die.bonus += 1
 			_log("  %s adds +1 to a %d (%s)" % [p.name, before, r.card])
+		"copy":
+			var twin := Die.new(die.raw, die.magic)  # same face; +1 bonuses don't copy
+			twin.origin = "Copied (%s), showing" % r.card
+			p.dice.append(twin)
+			_log("  %s copies a %d (%s)" % [p.name, before, r.card])
 		"keep":
-			if die.carried:
+			if die.carried:  # un-keep: refund whichever card kept it
+				var by := die.kept_by if die.kept_by != "" else key
+				p.reaction_uses[by] = int(p.reaction_uses.get(by, 0)) + 1
 				die.carried = false
-				p.reaction_uses[key] = r.left + 1
+				die.kept_by = ""
 				return true
 			die.carried = true
+			die.kept_by = key
 	p.reaction_uses[key] = r.left - 1
 	return true
 
@@ -657,11 +819,14 @@ func finish_reactions() -> bool:
 	var vals := values(current, challenge_kind)
 	if challenge_kind == STRENGTH:
 		p.penalty = e
-		p.carry_raws.clear()
+		p.strength_sixes = vals.filter(func(v): return v >= 6).size()
+		p.kept_dice.clear()
+		var kept_vals := []
 		for d in p.dice:
 			if d.carried:
-				p.carry_raws.append(d.raw)
-		var keep := "" if p.carry_raws.is_empty() else " (keeps %s for Sharpness)" % str(p.carry_raws)
+				p.kept_dice.append([d.raw, d.magic])  # a magic die stays magic
+				kept_vals.append(d.raw)
+		var keep := "" if kept_vals.is_empty() else " (keeps %s for Sharpness)" % str(kept_vals)
 		_log("  %s: %s -> %s%s" % [p.name, str(vals), Scoring.describe_penalty(e), keep])
 	else:
 		p.quest_score = e.successes
@@ -672,7 +837,8 @@ func finish_reactions() -> bool:
 		var rs: Array = def_of(c).get("reactions", [])
 		for j in rs.size():
 			var key := "%d:%d" % [c.id, j]
-			if rs[j].scope == "quest_once" and p.reaction_uses.get(key, rs[j].uses) < rs[j].uses:
+			var full := reaction_max(current, rs[j])
+			if rs[j].scope == "quest_once" and p.reaction_uses.get(key, full) < full:
 				p.reaction_uses[key] = 0
 	_next_challenge_player()
 	return true
@@ -705,6 +871,7 @@ func _next_challenge_player() -> void:
 		if challenge_kind == STRENGTH and flag_sum(pi, "skip_strength") > 0:
 			_log("  %s skips the Strength Challenge (Golden Apple)" % p.name)
 			p.penalty = {}
+			p.strength_sixes = 0
 			_result.rows.append({"player": pi, "skipped": true, "dice": [], "result": "Skipped (Golden Apple)",
 				"penalty": {}, "parts": [], "note": ""})
 			continue
@@ -735,6 +902,10 @@ func _record_row(pi: int, e: Dictionary) -> void:
 		"note": Scoring.total_note(challenge_card(challenge_kind).name, vals), "parts": []}
 	if challenge_kind == STRENGTH:
 		row.penalty = e.duplicate()
+		var auto := flag_sum(pi, "auto_penalty")
+		if auto > 0 and challenge_card(STRENGTH).name != "Fiery Salamander":
+			var line := "Kraken Blood: takes %d penalty automatically" % auto
+			row.note = line if row.note == "" else row.note + "\n" + line
 	else:
 		row.successes = e.successes
 		row.parts = success_parts(pi, vals)
@@ -753,18 +924,32 @@ func _reset_challenge_reactions(pi: int) -> void:
 func _roll(pi: int) -> void:
 	var p: Player = players[pi]
 	var pool := pool_size(pi, challenge_kind)
-	var carry: Array = p.carry_raws if challenge_kind == SHARPNESS else []
+	var carry: Array = p.kept_dice if challenge_kind == SHARPNESS else []
+	var free := int(p.penalty.get("free_six", 0)) if challenge_kind == SHARPNESS else 0
 	p.dice.clear()
 	for i in int(pool.normal):
 		if i < carry.size():
-			var kept := Die.new(carry[i])
+			var kept := Die.new(carry[i][0], carry[i][1])
 			kept.carried = true
 			p.dice.append(kept)
+		elif i < carry.size() + free:
+			var six := Die.new(6)
+			six.origin = "Free die (%s boon), showing" % strength_card.get("name", "Strength")
+			p.dice.append(six)
 		else:
 			p.dice.append(Die.new(_d6()))
 	for i in int(pool.magic):
 		p.dice.append(Die.new(_d6(), true))
 	_log("  %s rolls %dd6: %s" % [p.name, p.dice.size(), str(values(pi, challenge_kind))])
+	if challenge_kind == SHARPNESS and flag_sum(pi, "whetstone") > 0:
+		var n := 0
+		for d in p.dice:  # freshly rolled 1s only: kept, free and magic dice keep their faces
+			if d.raw == 1 and not d.magic and not d.carried and d.origin == "":
+				d.raw = _d6()
+				d.origin = "Rolled 1, rerolled (Dwarven Whetstone) to"
+				n += 1
+		if n > 0:
+			_log("  Dwarven Whetstone rerolls %d one%s: %s" % [n, "" if n == 1 else "s", str(values(pi, challenge_kind))])
 	if challenge_kind == SHARPNESS:
 		for k in int(p.penalty.get("opp_rerolls", 0)):
 			_opponent_reroll(pi)
@@ -842,6 +1027,13 @@ func act_reserve(card_id: int) -> bool:
 	return true
 
 
+## Rule variants that take the reserve away from the leader (see VARIANTS).
+func _leader_skips_reserve(pi: int) -> bool:
+	var after_q2 := variants.has("no_leader_reserve") and quest == 1
+	var always := variants.has("no_leader_reserve_always")
+	return (after_q2 or always) and pi in winners()
+
+
 func _next_reserve() -> void:
 	while true:
 		_reserve_pos += 1
@@ -850,6 +1042,8 @@ func _next_reserve() -> void:
 			return
 		var pi := order[_reserve_pos]
 		if reservable(pi).is_empty():
+			if _leader_skips_reserve(pi):
+				_log("%s leads and reserves nothing (variant)" % players[pi].name)
 			continue
 		current = pi
 		phase = Phase.RESERVE
@@ -875,7 +1069,14 @@ func _end_quest() -> void:
 
 
 func _start_quest() -> void:
-	var q: Dictionary = QUESTS[quest]
+	var q: Dictionary = QUESTS[quest].duplicate()
+	if variants.has("q3_extra_draw") and quest == 2:
+		q.draw += 1
+		if players.size() == 4:
+			for name in Q3_DUPES:  # new ids (see card_name): behaviour is looked up by name
+				deck.append({"id": data.ingredients.size() + Q3_DUPES.find(name), "name": name})
+			_shuffle(deck)
+			_log("(Quest 3: a second %s shuffled into the deck)" % ", ".join(Q3_DUPES))
 	_log("=== Quest %d ===" % (quest + 1))
 	strength_card = strength_deck.pop_back()
 	sharpness_card = sharpness_deck.pop_back()
@@ -894,11 +1095,18 @@ func _start_quest() -> void:
 		p.electrum_dice = 0
 		p.reaction_uses.clear()
 		p.penalty.clear()
-		p.carry_raws.clear()
+		p.kept_dice.clear()
+		p.strength_sixes = 0
 		p.wager = false
 		p.wager_decided = false
 		p.dice.clear()
 		p.quest_score = 0
+	if variants.has("q3_trailer_ap") and quest == 2:
+		var leaders := winners()
+		for pi in players.size():
+			if not pi in leaders:
+				players[pi].ap += 1
+				_log("%s trails and gets +1 AP (variant)" % players[pi].name)
 	_set_order()
 	_turn_step = -1
 	phase = Phase.CRAFT

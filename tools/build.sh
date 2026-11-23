@@ -14,7 +14,15 @@ MODE="${2:-release}"   # pass "debug" as 2nd arg for debug builds
 
 case "${1:-}" in
   check)
-    "$GODOT" --headless --import --quit
+    set +e
+    out=$("$GODOT" --headless --import --quit 2>&1)
+    code=$?
+    set -e
+    echo "$out" | grep -v -E "^Godot Engine|^$" || true
+    if echo "$out" | grep -q -E "SCRIPT ERROR|^ERROR|Parse Error"; then
+      echo "Script errors detected"; exit 1
+    fi
+    exit $code
     ;;
   test)
     "$GODOT" --headless --import --quit >/dev/null 2>&1 || true
@@ -47,9 +55,10 @@ case "${1:-}" in
     xcodebuild -project build/ios/FiresOfOlympus.xcodeproj -scheme FiresOfOlympus \
       -sdk iphonesimulator -configuration Debug -derivedDataPath build/ios/dd \
       ARCHS=x86_64 ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO -quiet build
-    DEV="${SIM_DEVICE:-$(xcrun simctl list devices booted | grep -oE '[0-9A-F-]{36}' | head -1)}"
+    DEV="${SIM_DEVICE:-$(xcrun simctl list devices booted | grep -oE '[0-9A-F-]{36}' | head -1 || true)}"
     if [ -z "$DEV" ]; then
-      DEV=$(xcrun simctl list devices available | grep -i ipad | grep -oE '[0-9A-F-]{36}' | head -1)
+      DEV=$(xcrun simctl list devices available | grep -i ipad | grep -oE '[0-9A-F-]{36}' | head -1 || true)
+      [ -n "$DEV" ] || { echo "No iPad simulator available"; exit 1; }
       xcrun simctl boot "$DEV"; open -a Simulator
     fi
     BUNDLE=$(grep bundle_identifier export_presets.cfg | cut -d'"' -f2)

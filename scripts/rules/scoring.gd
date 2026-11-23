@@ -9,6 +9,7 @@ const SHARPNESS_RULES := [
 ]
 const STRENGTH_RULES := [
 	"Golem", "Phantasm", "Cockatrice", "Razorback Turtle", "Kraken", "Mimic", "Giant Crab",
+	"Fiery Salamander",
 ]
 
 
@@ -44,10 +45,13 @@ static func sharpness_successes(card_name: String, vals: Array) -> int:
 	return 0
 
 
-## Returns {dice_loss, die_mod, opp_rerolls} and, for Razorback Turtle, cap.
-static func strength_penalty(card_name: String, vals: Array) -> Dictionary:
+## Returns {dice_loss, die_mod, opp_rerolls}, plus cap (Razorback Turtle) or free_six
+## (Fiery Salamander's boon: an extra Sharpness die showing 6).
+## `extra`: penalties taken automatically (Kraken Blood). Each one counts as one more
+## triggering die; pass/fail cards (Kraken, Giant Crab) give their penalty regardless.
+static func strength_penalty(card_name: String, vals: Array, extra := 0) -> Dictionary:
 	var out := {"dice_loss": 0, "die_mod": 0, "opp_rerolls": 0}
-	var ones := _count(vals, func(v): return v == 1)
+	var ones := _count(vals, func(v): return v == 1) + extra
 	match card_name:
 		"Golem":
 			out.die_mod = -ones
@@ -59,16 +63,19 @@ static func strength_penalty(card_name: String, vals: Array) -> Dictionary:
 			if ones > 0:
 				out.cap = 6 - ones
 		"Kraken":
-			if _sum(vals) <= 20:
+			if _sum(vals) <= 20 or extra > 0:
 				out.dice_loss = 1
 		"Mimic":
-			out.dice_loss = _count(vals, func(v): return posmod(v, 2) == 1)
+			out.dice_loss = _count(vals, func(v): return posmod(v, 2) == 1) + extra
 		"Giant Crab":
 			var best := 0
 			for c in _counts(vals).values():
 				best = maxi(best, c)
-			if best < 3:
+			if best < 3 or extra > 0:
 				out.dice_loss = 2
+		"Fiery Salamander":  # a boon, not a penalty, so Kraken Blood has nothing to take
+			if straight_start(vals) != null:
+				out.free_six = 1
 		_:
 			push_error("Unknown Strength Challenge: " + card_name)
 	return out
@@ -115,7 +122,22 @@ static func die_marks(card_name: String, vals: Array) -> Array[int]:
 				if counts[v] >= 3:
 					_mark_up_to(marks, vals, {v: 3}, 1)
 					break
+		"Fiery Salamander":
+			var s = straight_start(vals)
+			if s != null:
+				_mark_up_to(marks, vals, {s: 1, s + 1: 1, s + 2: 1}, 1)
 	return marks
+
+
+## Lowest v with v, v+1 and v+2 all among the results (Fiery Salamander), or null.
+static func straight_start(vals: Array):
+	var counts := _counts(vals)
+	var keys := counts.keys()
+	keys.sort()
+	for v in keys:
+		if counts.has(v + 1) and counts.has(v + 2):
+			return v
+	return null
 
 
 ## Extra context for sum-based Challenges, e.g. "Total 23". Empty for the rest.
@@ -149,6 +171,7 @@ static func penalty_cost(p: Dictionary) -> float:
 	var cost: float = float(p.get("dice_loss", 0)) + absf(p.get("die_mod", 0)) + 0.4 * p.get("opp_rerolls", 0)
 	if p.has("cap"):
 		cost += 0.7 * (6 - p.cap)
+	cost -= 1.5 * p.get("free_six", 0)  # a boon: negative cost
 	return cost
 
 
@@ -162,6 +185,8 @@ static func describe_penalty(p: Dictionary) -> String:
 		parts.append("opponent rerolls %d Sharpness %s" % [p.opp_rerolls, "die" if p.opp_rerolls == 1 else "dice"])
 	if p.has("cap"):
 		parts.append("Sharpness dice capped at %d" % p.cap)
+	if p.get("free_six", 0) > 0:
+		parts.append("a free 6 on Sharpness")
 	return "no penalty" if parts.is_empty() else ", ".join(parts)
 
 

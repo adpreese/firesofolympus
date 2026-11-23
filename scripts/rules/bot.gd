@@ -158,10 +158,40 @@ static func card_value(g: FoGame, pi: int, card: Dictionary, bias := {}) -> floa
 		v += 1.5
 	if d.get("swap_on_draft", false):
 		v += 1.0
+	if d.get("tiebreak", false) and g.quest == FoGame.QUESTS.size() - 1:
+		v += 0.5  # only counts in the last Quest's weapon
 	if d.get("gamble", false):
 		v += 0.2 + bias.get("gamble", 0.0)
+	if d.has("sharpened_dice"):  # most weapons get sharpened at least once
+		v += (1.0 if p.sharpen > 0 else 0.7) * d.sharpened_dice
+	if d.has("combo"):
+		if g.holds_name(pi, d.combo):
+			v += d.combo_dice
+		elif g.market.any(func(c): return c.name == d.combo):
+			v += 0.4 * d.combo_dice
+	for c in p.ingredients:  # this card completes a combo already held (Shadow Essence for Stygian Oil)
+		var hd := g.def_of(c)
+		if hd.get("combo", "") == card.name:
+			v += hd.combo_dice
+	if d.get("whetstone", false):
+		v += 0.6
+	if d.get("ignore_34", false):
+		v -= 1.5
+	if d.get("auto_penalty", 0) > 0 and g.strength_card.name != "Fiery Salamander":
+		v -= 1.2 * d.auto_penalty
+	if d.get("no_reserve", false) and g.quest < FoGame.QUESTS.size() - 1:
+		v -= 0.3
 	for r in d.get("reactions", []):
-		v += (0.6 + 0.6 * bias.get("reactions", 0.0)) * r.uses
+		var uses := float(r.get("uses", 0))
+		match r.get("uses_from", ""):
+			"unused_ap":
+				uses = 1.0  # the bot saves AP for it once it holds the card
+			"strength_sixes":
+				uses = 0.6
+		if r.has("needs") and not g.holds_name(pi, r.needs):
+			uses *= 0.3
+		var weight := 1.2 if r.kind == "copy" else 0.6
+		v += (weight + 0.6 * bias.get("reactions", 0.0)) * uses
 	return v
 
 
@@ -175,11 +205,20 @@ static func _noise(g: FoGame, salt: int) -> float:
 static func _craft_options(g: FoGame, bias: Dictionary, noise: float) -> Array:
 	var pi := g.current
 	var out := [{"move": ["pass"], "value": 0.3 + bias.get("pass", 0.0)}]
+	# Blood Ruby: every AP left at the end is a reroll in each Challenge, so spending one costs.
+	var ap_worth := 0.0
+	for c in g.players[pi].ingredients:
+		for r in g.def_of(c).get("reactions", []):
+			if r.get("uses_from", "") == "unused_ap":
+				ap_worth += 1.0
 	for c in g.market + g.reserve_options(pi):
-		out.append({"move": ["draft", c.id], "value": card_value(g, pi, c, bias) + _noise(g, c.id) * noise})
+		var cost := ap_worth * (1 - int(g.def_of(c).get("ap", 0)))
+		out.append({"move": ["draft", c.id], "value": card_value(g, pi, c, bias) - cost + _noise(g, c.id) * noise})
 	if g.can_sharpen(pi):
 		var p = g.players[pi]
-		var v: float = FoGame.SHARPEN_DICE[p.sharpen] + g.flag_sum(pi, "electrum") + bias.get("sharpen", 0.0)
+		var v: float = FoGame.SHARPEN_DICE[p.sharpen] + g.flag_sum(pi, "electrum") + bias.get("sharpen", 0.0) - ap_worth
+		if p.sharpen == 0:
+			v += g.flag_sum(pi, "sharpened_dice")  # Orichalcum's extra die
 		out.append({"move": ["sharpen"], "value": v + _noise(g, -1) * noise})
 	out.sort_custom(func(a, b): return a.value > b.value)
 	return out
@@ -228,6 +267,9 @@ static func _react(g: FoGame, min_gain: float) -> Array:
 				var after: float
 				if r.kind == "reroll":
 					after = g.expected_after_reroll(pi, i, kind, vals)
+				elif r.kind == "copy":
+					var twin := FoGame.Die.new(p.dice[i].raw, p.dice[i].magic)
+					after = g.outcome_of(pi, kind, vals + [g.die_value(pi, twin, kind)])
 				else:
 					var old: int = vals[i]
 					p.dice[i].bonus += 1
@@ -249,11 +291,17 @@ static func _react(g: FoGame, min_gain: float) -> Array:
 		if r.kind == "keep" and r.left > 0:
 			var pick := -1
 			for i in p.dice.size():
-				if not p.dice[i].carried and (pick < 0 or p.dice[i].raw > p.dice[pick].raw):
+				# raw face, but a magic die keeps its 5/6 conversion in Sharpness
+				if not p.dice[i].carried and (pick < 0 or _kept_face(p.dice[i]) > _kept_face(p.dice[pick])):
 					pick = i
 			if pick >= 0:
 				return ["react", r.key, pick]
 	return ["finish"]
+
+
+## What a Scabbard-kept die starts as in Sharpness, before that Challenge's Modifiers.
+static func _kept_face(d) -> int:
+	return (5 if d.raw <= 3 else 6) if d.magic else d.raw
 
 
 static func _reserve(g: FoGame, bias: Dictionary, noise: float) -> Array:
@@ -293,4 +341,9 @@ static func _rollout(c: FoGame, pi: int) -> float:
 	for qi in c.players.size():
 		if qi != pi:
 			best_other = maxi(best_other, c.players[qi].total)
-	return float(c.players[pi].total - best_other)
+	var lead := float(c.players[pi].total - best_other)
+	if lead == 0.0 and c.phase == FoGame.Phase.GAME_OVER:  # a tie-breaker (Olive Bough) decided it
+		var w := c.winners()
+		if w.size() == 1:
+			return 0.5 if w[0] == pi else -0.5
+	return lead

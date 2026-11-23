@@ -51,6 +51,17 @@ const INGREDIENT_SOUNDS := {
 	"Beeswax": "gravel_scoop.mp3",
 	"Lucky Fish Scale": "ceramic_slide_small.mp3",
 	"Gambler's Charm": "Coin Dropped on Ceramic Dish.wav",
+	"Phoenix Egg": "click_in_to_place.mp3",
+	"Dwarven Whetstone": "knife_sharpening_1.mp3",
+	"Magic Mirror": "ceramic_slide_small.mp3",
+	"Orichalcum": "hammer_hit_3.mp3",
+	"Blood Ruby": "click_in_to_place.mp3",
+	"Branch of Yggdrasil": "leaves_clip.mp3",
+	"Lightning Bolt": "hammer_hit1.mp3",
+	"Kraken Blood": "bottle_pour.mp3",
+	"Celestial Ore": "hammer_hit_4.mp3",
+	"Stygian Oil": "bottle_pour.mp3",
+	"Shadow Essence": "hidden_wall_opening.mp3",
 }
 
 ## Game event -> [file under assets/audio/, volume 0..1]
@@ -65,6 +76,18 @@ const SFX := {
 	"reserve": ["01_chest_open_2.wav", 0.5],
 	"quest_end": ["UI_Open_3.mp3", 0.5],
 	"game_over": ["anvil_3hit.mp3", 0.6],
+	# contextual: one per move type (main.gd reads FoGame.moves), plus card hover / zoom
+	"your_turn": ["JDSherbert - Ultimate UI SFX Pack - Cursor - 1.wav", 0.5],
+	"pass": ["Modern9.mp3", 0.5],
+	"swap": ["ingredient_sounds/MetalScraping.mp3", 0.5],
+	"wager": ["Coin Dropped on Ceramic Dish.wav", 0.6],
+	"reroll": ["Roll_8d6.wav", 0.18],
+	"plus_one": ["ingredient_sounds/hammer_hit_5.mp3", 0.5],
+	"keep": ["ingredient_sounds/click_in_to_place.mp3", 0.5],
+	"copy": ["ingredient_sounds/hammer_hit_6.mp3", 0.5],
+	"hover": ["JDSherbert - Ultimate UI SFX Pack - Cursor - 3.wav", 0.15],
+	"zoom": ["JDSherbert - Ultimate UI SFX Pack - Cursor - 5.wav", 0.4],
+	"menu": ["Modern16.mp3", 0.4],
 }
 const MUSIC := "res://assets/audio/US_Army_Blues_-_07_-_Bayou_Farewell.mp3"
 
