@@ -48,6 +48,10 @@ online multiplayer, and character portraits.
       shrinks the layout to about 0.36x, too small to play; it needs its own layout, or ship iPad-only
       (`application/targeted_device_family=1`; it is currently 2 = iPhone & iPad). Icon and splash come from `tools/make_art.gd`.
       Not yet tried on a device: safe-area insets and haptics.
+- [x] Phone layout (web): portrait windows get a one-column layout at a 640 px design width with
+      Table / Blacksmiths tabs (`?layout=phone|desktop` forces either). Landscape phones still get the
+      shrunken desktop layout. The iOS app is locked to landscape, so on an iPhone it doesn't use this yet.
+      Not yet tried on a real phone browser.
 - [x] Colourblind-safe die markers: magic and kept dice get a shape or icon, not just colour.
       Corner symbols: ✓ scores / protects, × triggers the penalty, ◆ magic, ▲ kept (`FoUI.MARK_*`).
 - [x] Text size option and reduced-motion option (landed with the Milestone 3 settings).

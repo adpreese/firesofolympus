@@ -53,6 +53,11 @@ Targets: Web (primary for playtesting) and iOS. Landscape 1920x1080 base, `canva
   Pixel art is nearest-upscaled at load. Web export excludes the duplicate music `.ogg`.
 - `tools/make_art.gd` — regenerates `icon.png` (App Store icon, no alpha) and `assets/splash.png`
   (boot splash / iOS launch image): `godot --headless --script res://tools/make_art.gd`
+- Phone layout: a portrait window switches main.gd to `phone` mode: 640x1136 design size
+  (`PHONE_SIZE`, set as the root's content scale size), one column, Table / Blacksmiths tabs.
+  It switches live on rotate. Force it with `?layout=phone|desktop` on the web build or
+  `--phone` / `--desktop` locally. Anything with a fixed width needs a phone branch
+  (`test_phone_layout_fits` checks every screen fits in 608 px).
 - Touch: interactive controls are at least `TOUCH` (72 px = 44 pt on iPad) in main.gd; iOS safe-area
   insets go on the board margin (`_apply_safe_area`, mobile only).
 - `tests/` — tiny built-in runner (`run_tests.gd`), no addons
