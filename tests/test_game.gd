@@ -243,12 +243,21 @@ func test_history_matches_scores() -> void:
 	for s in 30:
 		var g := _new_game(2 + s % 3, 900 + s)
 		_play_out(g)
-		eq(g.history.size(), 9, "seed %d: 3 x (Strength, Sharpness, Quest)" % s)
+		eq(g.history.size(), 12, "seed %d: 3 x (order, Strength, Sharpness, Quest)" % s)
 		for q in 3:
-			var st: Dictionary = g.history[q * 3]
-			var sh: Dictionary = g.history[q * 3 + 1]
-			var qr: Dictionary = g.history[q * 3 + 2]
-			eq([st.type, st.kind, sh.kind, qr.type, qr.quest], ["challenge", "Strength", "Sharpness", "quest", q], "seed %d order" % s)
+			var od: Dictionary = g.history[q * 4]
+			var st: Dictionary = g.history[q * 4 + 1]
+			var sh: Dictionary = g.history[q * 4 + 2]
+			var qr: Dictionary = g.history[q * 4 + 3]
+			eq([od.type, od.quest, st.type, st.kind, sh.kind, qr.type, qr.quest], ["order", q, "challenge", "Strength", "Sharpness", "quest", q], "seed %d order" % s)
+			for k in od.rows.size() - 1:  # the listed order follows the rule
+				var a: Dictionary = od.rows[k]
+				var b: Dictionary = od.rows[k + 1]
+				var sa: int = a.dice[0] + a.dice[1]
+				var sb: int = b.dice[0] + b.dice[1]
+				ok(a.successes < b.successes or (a.successes == b.successes and sa >= sb), "seed %d quest %d order follows the rule" % [s, q])
+				if a.successes == b.successes and sa == sb:
+					ok(a.tiebreak and b.tiebreak, "seed %d tie marked" % s)
 			eq(st.rows.size(), g.players.size(), "seed %d strength rows" % s)
 			eq(sh.rows.size(), g.players.size(), "seed %d sharpness rows" % s)
 			for row in sh.rows:
@@ -675,3 +684,34 @@ func test_reaction_kind() -> void:
 	if not rs.is_empty():
 		eq(g.reaction_kind("%d:0" % c.id), rs[0].kind)
 	eq(g.reaction_kind("nonsense"), "")
+
+
+## Mats show each Challenge result as soon as that Blacksmith finishes, and only for this Quest.
+func test_quest_rows_fill_in_as_players_finish() -> void:
+	var g := _new_game(3, 7)
+	var steps := 0
+	var quest := 0
+	while g.phase != FoGame.Phase.GAME_OVER and steps < 5000:
+		if g.quest != quest:
+			quest = g.quest
+			for pi in 3:
+				eq(g.quest_rows(pi), [], "a new Quest starts with clean mats")
+		if g.phase == FoGame.Phase.REACT:
+			var rows := g.quest_rows(g.current)
+			var want := 0 if g.challenge_kind == FoGame.STRENGTH else 1
+			eq(rows.size(), want, "rows before %s rolls for %s" % [g.players[g.current].name, g.challenge_kind])
+			if want == 1:
+				eq(rows[0].kind, FoGame.STRENGTH, "Strength result first")
+			var pi := g.current
+			var kind := g.challenge_kind
+			var q := g.quest
+			g.finish_reactions()
+			if g.quest == q:  # the last roll of the game ends Quest 3 at once
+				var after := g.quest_rows(pi)
+				eq(after.size(), want + 1, "the result appears as soon as they finish")
+				if after.size() == want + 1:
+					eq(after[-1].kind, kind, "newest row is the Challenge just played")
+		else:
+			FoBot.step(g)
+		steps += 1
+	ok(g.phase == FoGame.Phase.GAME_OVER, "game finished")

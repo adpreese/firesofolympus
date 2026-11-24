@@ -96,10 +96,13 @@ var strength_card: Dictionary = {}
 var sharpness_card: Dictionary = {}
 var challenge_kind := STRENGTH
 var log_lines: PackedStringArray = []
-## Finished Challenges and Quests, oldest first, for results screens. Each entry:
+## Finished Challenges and Quests, oldest first (the UI shows them on the mats). Each entry:
 ##   {type: "challenge", quest, kind, card, rows: [{player, skipped, dice: [{value, mark, magic,
 ##     carried, steps}], result, successes | penalty, parts, note}]}
 ##   {type: "quest", quest, final, rows: [{player, challenge, wager, score, total}]}
+##   {type: "order", quest, rows: [{player, dice: [a, b], successes, tiebreak}]} in draft order;
+##     successes is last Quest's (-1 in Quest 1), tiebreak: they shared a total with a neighbour
+##     and the re-roll decided it. Added when each Quest's order is set, before its draft.
 var history: Array = []
 ## Every successful move, in order, as [method, args...]. With the seed this replays the
 ## whole game (see `replay`), which is how saves work.
@@ -883,6 +886,20 @@ func _next_challenge_player() -> void:
 		return
 
 
+## This Quest's Challenge results so far for seat `pi`, Strength first: history rows
+## (see `history`), including the Challenge being played. Empty in simulation copies.
+func quest_rows(pi: int) -> Array:
+	var entries := history.filter(func(e): return e.type == "challenge" and e.quest == quest)
+	if _result.get("quest", -1) == quest and not entries.any(func(e): return is_same(e, _result)):
+		entries.append(_result)
+	var out := []
+	for e in entries:
+		for r in e.rows:
+			if r.player == pi:
+				out.append(r.merged({"kind": e.kind}))
+	return out
+
+
 func _open_result(kind: String) -> void:
 	_result = {"type": "challenge", "quest": quest, "kind": kind, "card": challenge_card(kind), "rows": []}
 
@@ -1117,8 +1134,10 @@ func _start_quest() -> void:
 func _set_order() -> void:
 	var idx := range(players.size())
 	var roll := {}
+	var dice := {}
 	for i in idx:
-		roll[i] = _d6() + _d6() + rng.randf() * 0.5  # fractional part stands in for re-rolls
+		dice[i] = [_d6(), _d6()]
+		roll[i] = dice[i][0] + dice[i][1] + rng.randf() * 0.5  # fractional part stands in for re-rolls
 	if quest == 0:
 		idx.sort_custom(func(a, b): return roll[a] > roll[b])
 	else:
@@ -1127,6 +1146,16 @@ func _set_order() -> void:
 			var sb: int = players[b].quest_scores[-1]
 			return sa < sb if sa != sb else roll[a] > roll[b])
 	order.assign(idx)
+	var rows := []
+	for i in order:
+		var tied := false
+		for j in order:
+			if j != i and int(roll[j]) == int(roll[i]) \
+					and (quest == 0 or players[j].quest_scores[-1] == players[i].quest_scores[-1]):
+				tied = true
+		rows.append({"player": i, "dice": dice[i], "tiebreak": tied,
+			"successes": -1 if quest == 0 else players[i].quest_scores[-1]})
+	history.append({"type": "order", "quest": quest, "rows": rows})
 	var names := PackedStringArray()
 	for i in order:
 		names.append(players[i].name)

@@ -4,7 +4,7 @@ extends Control
 ## The look (theme, card tiles, dice) lives in FoUI; art, fonts and sounds come from FoAssets.
 ## Sounds and animations are triggered by diffing game state between redraws, so CPU moves
 ## look and sound the same as human ones. CPU turns wait while anything is animating or
-## an overlay (results screen, zoomed card) is open.
+## an overlay (zoomed card, menu) is open or a Quest banner is up.
 ## Smoke test: `godot -- --autoplay` plays an all-CPU game at full speed and quits.
 
 const MAX_PLAYERS := 4
@@ -56,14 +56,15 @@ var sfx_next := 0
 var last_snap := {}
 var quitting := false
 
-var overlay: Control           # results screens and card zoom, drawn over the board
+var overlay: Control           # card zoom and the menu, drawn over the board
 var fx_layer: Control          # flying cards, above the board and below the overlay
-var results_queue: Array = []  # FoGame.history entries the players haven't dismissed yet
-var history_seen := 0
+var history_seen := 0          # FoGame.history entries already announced (Quest banners)
+var banner_left := 0.0         # a "Quest N, begin" banner is showing; CPU turns wait
+var bobbers: Array = []        # bobbing Challenge art (see _bob)
+var victory_played := false    # the victory screen has animated in once this game
 var zoom := {}                 # {card, challenge} while a card is zoomed
 var selected_die := -1         # die whose breakdown is shown during a Challenge
 var die_context := ""          # resets selected_die when the roller or Challenge changes
-var results_detail: Label
 
 var overlay_key := ""          # what the overlay showed last, so new content fades in
 var dice_nodes: Array = []     # die buttons of the current roll, for the tumble
@@ -81,8 +82,6 @@ var saved := []                # [moves, seen] last written, to skip identical s
 var resume := []               # [FoGame, seen] from the save file, for the title screen
 var menu := ""                 # open menu page: pause, settings, rules, restart ("" = none)
 var menu_back := ""            # page that settings / rules return to
-var handoff := -1              # human seat the device should be passed to, -1 = none
-var last_human := -1           # human seat that last had a decision
 var on_title := false          # the main menu is showing (vs seat setup or a game)
 var touching := false          # last pointer input was a touch: no hover effects
 var peek: Control              # full-size preview of a hovered mat card (mouse only)
@@ -91,6 +90,7 @@ const HOLD_SLOP := 16.0         # moving further than this (e.g. scrolling) canc
 const LIFT := 1.06              # hovered cards grow this much
 
 const TITLE_ART := "res://assets/images/challenges/HydraChopBIGB.png"
+const TITLE_BARS := Color(0.06, 0.05, 0.05)   # behind the title art where it doesn't fill the screen
 const TITLE_INK := Color("#E6D4B2")   # the prototype's start-screen palette
 const TITLE_RED := Color("#9A2B2B")
 const TITLE_DARK := Color("#3C3426")
@@ -206,6 +206,9 @@ func _process(delta: float) -> void:
 		_haptic(40)
 	if tumble_left > 0 and not _blocking():
 		_tumble(delta)
+	_bob()
+	if banner_left > 0:
+		banner_left = maxf(0.0, banner_left - delta)
 	if game == null or game.phase == FoGame.Phase.GAME_OVER or not game.player().is_bot or _busy():
 		return
 	if bot_plan == null or bot_plan.g != game or bot_plan.stale() or bot_plan.pi != game.current:
@@ -229,12 +232,19 @@ func _show_title() -> void:
 	_leave_game()
 	on_title = true
 	_clear(self)
+	# The whole picture, fitted to the screen (never cropped); dark bars where it doesn't reach.
+	var bars := ColorRect.new()
+	bars.color = TITLE_BARS
+	bars.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bars.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(bars)
 	var art := TextureRect.new()
 	art.texture = load(TITLE_ART)
 	art.set_anchors_preset(Control.PRESET_FULL_RECT)
 	art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	art.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	art.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(art)
 	var tint := ColorRect.new()
 	tint.color = Color(0.17, 0.11, 0.08, 0.4)
@@ -314,7 +324,7 @@ func _menu_button(text: String, color: Color, f: Callable, click_sound := true) 
 	var styles := {"normal": color, "hover": color.lightened(0.15), "pressed": color.darkened(0.2),
 		"focus": color, "disabled": color.darkened(0.3)}
 	for st in styles:
-		var sb := FoUI.box(styles[st], TITLE_EDGE if st != "hover" else TITLE_INK, 2, 8, 10)
+		var sb := FoUI.box(styles[st], TITLE_EDGE if st != "hover" else TITLE_INK, 2, 10)
 		b.add_theme_stylebox_override(st, sb)
 	for c in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
 		b.add_theme_color_override(c, TITLE_INK)
@@ -347,12 +357,12 @@ func _show_setup() -> void:
 	center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	center.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.add_child(center)
-	var pnl := FoUI.panel(FoUI.box(FoUI.PANEL, FoUI.GOLD, 2, 16, 32))
+	var pnl := FoUI.panel(FoUI.box(FoUI.PANEL, FoUI.GOLD, 2, 32))
 	center.add_child(pnl)
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 12)
 	if phone:
-		pnl.add_theme_stylebox_override("panel", FoUI.box(FoUI.PANEL, FoUI.GOLD, 2, 16, 20))
+		pnl.add_theme_stylebox_override("panel", FoUI.box(FoUI.PANEL, FoUI.GOLD, 2, 20))
 		box.custom_minimum_size.x = _view_w() - 32 - 40
 	pnl.add_child(box)
 	var title := FoUI.heading("New game", 56, FoUI.GOLD)
@@ -417,7 +427,7 @@ func _show_setup() -> void:
 	go.add_child(back)
 	var begin := _title_button("Begin the Quests", _start_game)
 	begin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	begin.add_theme_stylebox_override("normal", FoUI.box(TITLE_RED, FoUI.GOLD, 2, 8, 10))
+	begin.add_theme_stylebox_override("normal", FoUI.box(TITLE_RED, FoUI.GOLD, 2, 10))
 	go.add_child(begin)
 	box.add_child(go)
 	if not resume.is_empty():
@@ -496,18 +506,16 @@ func _enter_game(g: FoGame, seen: int, cpus: Array = []) -> void:
 	bot_plan = null
 	resume = []
 	last_snap = {}
-	results_queue.clear()
 	history_seen = seen
 	saved = []
 	menu = ""
-	handoff = -1
-	last_human = -1
 	zoom = {}
 	selected_die = -1
 	tumble_left = 0.0
 	card_nodes = {}
 	roll_pending = false
 	overlay_key = ""
+	victory_played = false
 	_build_board()
 
 
@@ -515,6 +523,7 @@ func _enter_game(g: FoGame, seen: int, cpus: Array = []) -> void:
 
 func _build_board() -> void:
 	_reset_flights()
+	banner_left = 0.0  # the fx layer (and any banner on it) is rebuilt
 	_clear(self)
 	add_child(FoUI.background())
 	var margin := MarginContainer.new()
@@ -666,7 +675,6 @@ func _refresh() -> void:
 	_play_events()
 	_sync_history()
 	_autosave()
-	_check_handoff()
 	_follow_turn()
 	card_nodes = {}
 	_render_players()
@@ -688,11 +696,6 @@ func _render_header() -> void:
 		title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		title.clip_text = true
 	top.add_child(title)
-	var phase_name := _phase_name()
-	if phase_name != "":
-		var c := FoUI.chip(phase_name, FoUI.INK, 16 if phone else 18)
-		c.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		top.add_child(c)
 	if not phone:
 		var gap := Control.new()
 		gap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -705,6 +708,8 @@ func _render_header() -> void:
 		_open_menu("pause"))
 	top.add_child(menu_button)
 	bar.add_child(top)
+	if game.phase == FoGame.Phase.GAME_OVER:  # the victory screen gets the whole table
+		return
 	var row: BoxContainer = VBoxContainer.new() if phone else HBoxContainer.new()
 	row.add_theme_constant_override("separation", 10 if phone else 14)
 	for kind in [FoGame.STRENGTH, FoGame.SHARPNESS]:
@@ -713,20 +718,10 @@ func _render_header() -> void:
 	header.add_child(row)
 
 
-func _phase_name() -> String:
-	match game.phase:
-		FoGame.Phase.CRAFT, FoGame.Phase.SWAP:
-			return "Crafting"
-		FoGame.Phase.WAGER, FoGame.Phase.REACT:
-			return "%s Challenge" % game.challenge_kind
-		FoGame.Phase.RESERVE:
-			return "Reserving"
-	return ""
-
-
+## A Challenge card, tinted by kind (Strength red, Sharpness blue); the one being played is lit.
 func _challenge_panel(card: Dictionary, active: bool) -> Control:
-	var accent := FoUI.RED if card.kind == FoGame.STRENGTH else FoUI.MAGIC
-	var style := FoUI.box(FoUI.PANEL_LIGHT if active else FoUI.PANEL, FoUI.GOLD if active else FoUI.EDGE, 3 if active else 1, 12, 12)
+	var accent := _kind_color(card.kind)
+	var style := FoUI.box(FoUI.PANEL.lerp(accent, 0.3 if active else 0.16), accent if active else accent.darkened(0.35), 3 if active else 2, 12)
 	var pnl := FoUI.panel(style)
 	pnl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var row := HBoxContainer.new()
@@ -734,15 +729,16 @@ func _challenge_panel(card: Dictionary, active: bool) -> Control:
 	pnl.add_child(row)
 	var tex := FoAssets.challenge_art(card)
 	if tex != null:
-		row.add_child(FoUI.picture(tex, 84 if phone else 120, true))
+		row.add_child(_bobbing_picture(tex, 84 if phone else 120, card.kind))
 	var text := VBoxContainer.new()
 	text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	text.add_theme_constant_override("separation", 4)
-	text.add_child(FoUI.label("%s Challenge  ·  %s" % [card.kind, card.type], 15 if phone else 16, accent))
 	text.add_child(FoUI.heading(card.name, 22 if phone else 26, FoUI.GOLD if active else FoUI.INK))
+	text.add_child(FoUI.label(card.type, 15 if phone else 16, accent))
 	text.add_child(FoUI.label(card.rule, 17 if phone else 18))
 	row.add_child(text)
-	_zoomable(pnl, card, true)
+	if phone:  # the desktop panel already shows the whole card; a phone's art is small
+		_zoomable(pnl, card, true)
 	return pnl
 
 
@@ -771,25 +767,23 @@ func _render_order() -> void:
 	if game.phase == FoGame.Phase.GAME_OVER:
 		return
 	var crafting := game.phase in [FoGame.Phase.CRAFT, FoGame.Phase.SWAP]
-	var title := FoUI.label("Draft order" if crafting else "Turn order", 18, FoUI.MUTED, false)
-	title.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	order_strip.add_child(title)
 	if crafting:
 		var n := PHONE_QUEUE_LEN if phone else QUEUE_LEN
 		var queue := game.craft_queue(n)
 		for i in queue.size():
 			if i > 0:
 				var turn: bool = queue[i].round != queue[i - 1].round
-				order_strip.add_child(_order_arrow("↩" if turn else "›", turn))
+				var arrow: Control = _uturn() if turn else _order_arrow("›")
+				order_strip.add_child(arrow)
 			order_strip.add_child(_order_chip(queue[i].player, i == 0, false))
 		if queue.size() == n:
-			order_strip.add_child(_order_arrow("…", false))
+			order_strip.add_child(_order_arrow("…"))
 		return
 	var order := _seat_order()
 	var at := order.find(game.current)
 	for i in order.size():
 		if i > 0:
-			order_strip.add_child(_order_arrow("›", false))
+			order_strip.add_child(_order_arrow("›"))
 		order_strip.add_child(_order_chip(order[i], i == at, i < at))
 
 
@@ -797,7 +791,7 @@ func _order_chip(pi: int, now: bool, done: bool) -> Control:
 	var p = game.players[pi]
 	var color := FoUI.GOLD if now else (FoUI.MUTED if done else FoUI.INK)
 	var c := FoUI.panel(FoUI.box(FoUI.PANEL_LIGHT if now else FoUI.PANEL.darkened(0.25),
-		FoUI.GOLD if now else FoUI.EDGE, 2 if now else 1, 12, 0))
+		FoUI.GOLD if now else FoUI.EDGE, 2 if now else 1, 0))
 	var st: StyleBoxFlat = c.get_theme_stylebox("panel")
 	st.content_margin_left = 12
 	st.content_margin_right = 12
@@ -810,19 +804,36 @@ func _order_chip(pi: int, now: bool, done: bool) -> Control:
 	return c
 
 
-func _order_arrow(text: String, turn: bool) -> Label:
-	var l := FoUI.label(text, 22 if turn else 20, FoUI.GOLD if turn else FoUI.MUTED, false)
+func _order_arrow(text: String) -> Label:
+	var l := FoUI.label(text, 20, FoUI.MUTED, false)
 	l.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	if turn:
-		l.tooltip_text = "Snake draft: the order reverses each round"
 	return l
+
+
+## Where the snake draft reverses: a U-turn arrow, drawn (the fonts have no such glyph).
+func _uturn() -> Control:
+	var c := Control.new()
+	c.custom_minimum_size = Vector2(30, 30)
+	c.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	c.tooltip_text = "Snake draft: the order reverses"
+	c.draw.connect(func():
+		var w := 3.0
+		var r := 8.0
+		var mid := Vector2(17, 15)
+		var top := mid.y - r
+		var bottom := mid.y + r
+		c.draw_line(Vector2(4, top), Vector2(mid.x, top), FoUI.GOLD, w)
+		c.draw_arc(mid, r, -PI / 2, PI / 2, 16, FoUI.GOLD, w)
+		c.draw_line(Vector2(mid.x, bottom), Vector2(9, bottom), FoUI.GOLD, w)
+		c.draw_colored_polygon(PackedVector2Array([Vector2(3, bottom), Vector2(10, bottom - 6), Vector2(10, bottom + 6)]), FoUI.GOLD))
+	return c
 
 
 func _player_mat(pi: int) -> Control:
 	var p = game.players[pi]
 	var active: bool = pi == game.current and game.phase != FoGame.Phase.GAME_OVER
 	var mat := FoUI.panel(FoUI.box(FoUI.PANEL_LIGHT if active else FoUI.PANEL,
-		FoUI.GOLD if active else FoUI.EDGE, 3 if active else 1, 12, 12))
+		FoUI.GOLD if active else FoUI.EDGE, 3 if active else 1, 12))
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 8)
 	mat.add_child(v)
@@ -865,19 +876,16 @@ func _player_mat(pi: int) -> Control:
 	if p.passed and game.phase == FoGame.Phase.CRAFT:
 		stats.add_child(FoUI.chip("Passed", FoUI.MUTED))
 	v.add_child(stats)
-	if not p.penalty.is_empty() and Scoring.penalty_cost(p.penalty) > 0:
-		v.add_child(FoUI.label("Penalty: " + Scoring.describe_penalty(p.penalty), 17, FoUI.RED))
-	elif p.penalty.get("free_six", 0) > 0:
-		v.add_child(FoUI.label("Boon: " + Scoring.describe_penalty(p.penalty), 17, FoUI.GOLD))
+	for r in game.quest_rows(pi):
+		v.add_child(_result_row(r))
 
-	var cards := HFlowContainer.new()
-	cards.add_theme_constant_override("h_separation", 6)
-	cards.add_theme_constant_override("v_separation", 6)
-	for c in p.ingredients:
-		cards.add_child(_mini_card(c, "p%d" % pi, game.in_reserve(pi, c.id)))
-	if p.ingredients.is_empty():
-		cards.add_child(FoUI.label("No Ingredients yet", 16, FoUI.MUTED, false))
-	v.add_child(cards)
+	if not p.ingredients.is_empty():
+		var cards := HFlowContainer.new()
+		cards.add_theme_constant_override("h_separation", 6)
+		cards.add_theme_constant_override("v_separation", 6)
+		for c in p.ingredients:
+			cards.add_child(_mini_card(c, "p%d" % pi, game.in_reserve(pi, c.id)))
+		v.add_child(cards)
 	var idle_reserve: Array = game.reserve_options(pi)
 	if not idle_reserve.is_empty():
 		v.add_child(FoUI.label("Reserve", 15, FoUI.RESERVE))
@@ -889,6 +897,33 @@ func _player_mat(pi: int) -> Control:
 			rrow.add_child(m)
 		v.add_child(rrow)
 	return mat
+
+
+## One finished Challenge on a mat: a strip in the Challenge's colour with the final dice
+## and the outcome, filled in as each Blacksmith finishes rolling.
+func _result_row(r: Dictionary) -> Control:
+	var accent := _kind_color(r.kind)
+	var strip := FoUI.panel(FoUI.box(FoUI.PANEL.lerp(accent, 0.14), accent.darkened(0.3), 1, 4))
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 4)
+	strip.add_child(row)
+	for d in r.dice:
+		var b := FoUI.die_face(d.value, d.mark, d.magic, d.carried, 34)
+		b.focus_mode = Control.FOCUS_NONE
+		b.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(b)
+	var color := FoUI.INK
+	if r.kind == FoGame.STRENGTH and not r.skipped:
+		color = FoUI.GOLD if Scoring.penalty_cost(r.penalty) <= 0 else FoUI.RED
+	elif r.kind == FoGame.SHARPNESS:
+		color = FoUI.GOLD if r.successes > 0 else FoUI.MUTED
+	var res := FoUI.label(r.result, 16, color, false)
+	res.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	res.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	res.clip_text = true
+	res.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	row.add_child(res)
+	return strip
 
 
 func _mini_card(c: Dictionary, zone: String, reserved: bool) -> Control:
@@ -916,20 +951,20 @@ func _render_actions() -> void:
 		_render_craft()
 		return
 	if p.is_bot:
-		action_box.add_child(_prompt("%s is thinking..." % p.name))
 		if game.phase == FoGame.Phase.REACT:
 			_render_dice(false)
+		else:
+			action_box.add_child(_prompt("…"))  # keeps the table from jumping between turns
 		return
 	match game.phase:
 		FoGame.Phase.SWAP:
-			action_box.add_child(_prompt("%s: Rusty Bauble. Choose an opponent's Ingredient to swap it for." % p.name))
+			action_box.add_child(_prompt("Rusty Bauble: swap for"))
 			var flow := _tile_flow()
 			for t in game.swap_targets(game.current):
 				var who: String = game.players[t.player].name
 				flow.add_child(_card_tile(t.card, func(): game.act_swap(t.player, t.card.id), "%s's" % who))
 		FoGame.Phase.WAGER:
-			action_box.add_child(_prompt("%s: Gambler's Charm. Wager a Success?" % p.name))
-			action_box.add_child(FoUI.label("If you score the most Sharpness Successes this Quest (no ties) you gain 1, otherwise you lose 1.", 20, FoUI.MUTED))
+			action_box.add_child(_prompt("Gambler's Charm"))
 			var row := _button_row()
 			row.add_child(_big_button("Wager", func(): game.act_wager(true)))
 			row.add_child(_big_button("No wager", func(): game.act_wager(false)))
@@ -937,8 +972,7 @@ func _render_actions() -> void:
 		FoGame.Phase.REACT:
 			_render_react()
 		FoGame.Phase.RESERVE:
-			action_box.add_child(_prompt("%s: reserve one Ingredient for future Quests" % p.name))
-			action_box.add_child(FoUI.label("Only you can draft a reserved Ingredient, and it costs 1 AP as usual.", 20, FoUI.MUTED))
+			action_box.add_child(_prompt("Reserve"))
 			var flow := _tile_flow()
 			for c in game.reservable(game.current):
 				flow.add_child(_card_tile(c, func(): game.act_reserve(c.id)))
@@ -946,47 +980,42 @@ func _render_actions() -> void:
 
 func _render_craft() -> void:
 	var p := game.player()
-	if p.is_bot:
-		action_box.add_child(_prompt("%s is choosing..." % p.name))
-	else:
-		action_box.add_child(_prompt("%s, your move: %d AP left. Every action costs 1 AP." % [p.name, p.ap]))
-	action_box.add_child(FoUI.heading("On the table", 20, FoUI.MUTED))
 	var flow := _tile_flow()
 	for c in game.market:
 		var t := _card_tile(c, func(): game.act_draft(c.id))
 		t.disabled = p.is_bot
 		_register_card(c, "m", t)
 		flow.add_child(t)
-	if game.market.is_empty():
-		flow.add_child(FoUI.label("The table is empty.", 18, FoUI.MUTED, false))
 	if p.is_bot:
 		return
 	var reserve := game.reserve_options(game.current)
 	if not reserve.is_empty():
-		action_box.add_child(FoUI.heading("Your reserve", 20, FoUI.RESERVE))
+		action_box.add_child(FoUI.heading("Reserve", 20, FoUI.RESERVE))
 		var rflow := _tile_flow()
 		for c in reserve:
 			rflow.add_child(_card_tile(c, func(): game.act_draft(c.id), "", FoUI.RESERVE))
 	var row := _button_row()
+	var ap := FoUI.chip("%d AP" % p.ap, FoUI.GOLD if p.ap > 0 else FoUI.MUTED, 22)
+	ap.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(ap)
 	var sharpen_text := "Sharpen"
 	if p.sharpen < FoGame.SHARPEN_DICE.size():
 		sharpen_text += "  (+%dd6)" % (FoGame.SHARPEN_DICE[p.sharpen] + game.flag_sum(game.current, "electrum"))
 	var sb := _big_button(sharpen_text, func(): game.act_sharpen())
 	sb.disabled = not game.can_sharpen(game.current)
 	row.add_child(sb)
-	row.add_child(_big_button("Pass (done for this Quest)", func(): game.act_pass()))
+	row.add_child(_big_button("Pass", func(): game.act_pass()))
 	action_box.add_child(row)
 
 
 func _render_react() -> void:
 	var p := game.player()
 	var card := game.challenge_card(game.challenge_kind)
-	action_box.add_child(_prompt("%s faces %s" % [p.name, card.name]))
 	_render_dice(true)
 	if tumble_left > 0:
 		return
 	var vals := game.values(game.current, game.challenge_kind)
-	var result := "Current result: " + game.describe_outcome(game.current)
+	var result := game.describe_outcome(game.current)
 	var note := Scoring.total_note(card.name, vals)
 	if note != "":
 		result += "   " + note
@@ -996,12 +1025,11 @@ func _render_react() -> void:
 	var reactions := game.available_reactions(game.current)
 	var still_valid := false
 	if not reactions.is_empty():
-		action_box.add_child(FoUI.label("Reactions: pick one, then tap a die", 18, FoUI.MUTED))
 		var row: Container = VBoxContainer.new() if phone else HFlowContainer.new()
 		row.add_theme_constant_override("separation" if phone else "h_separation", 8)
 		for r in reactions:
-			var verb: String = {"reroll": "Reroll a die", "plus_one": "+1 to a die", "keep": "Keep a die for Sharpness", "copy": "Copy a die"}[r.kind]
-			var b := _button("%s: %s (%d left)" % [r.card, verb, r.left], func(): selected_reaction = r.key)
+			var verb: String = {"reroll": "Reroll", "plus_one": "+1", "keep": "Keep", "copy": "Copy"}[r.kind]
+			var b := _button("%s: %s ×%d" % [r.card, verb, r.left], func(): selected_reaction = r.key)
 			if phone:  # full width, wrapping, so long card names never run off the screen
 				b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 			b.toggle_mode = true
@@ -1047,59 +1075,182 @@ func _render_dice(clickable: bool) -> void:
 	action_box.add_child(row)
 	if tumbling:
 		return
-	var legend := _marks_legend(marks, game.challenge_kind, p.dice)
-	if legend != "":
-		action_box.add_child(FoUI.label(legend, 16, FoUI.MUTED))
 	if clickable:
 		if selected_die >= 0 and selected_die < p.dice.size():
 			var steps := game.die_breakdown(game.current, p.dice[selected_die], game.challenge_kind)
-			var pnl := FoUI.panel(FoUI.box(FoUI.PANEL, FoUI.EDGE, 1, 8, 10))
+			var pnl := FoUI.panel(FoUI.box(FoUI.PANEL, FoUI.EDGE, 1, 10))
 			pnl.add_child(FoUI.label(_breakdown_text(steps), 18))
 			action_box.add_child(pnl)
-		elif selected_reaction == "":
-			action_box.add_child(FoUI.label("Tap a die to see how its value was worked out.", 16, FoUI.MUTED))
 
 
+## The victory screen, inline on the board: winner, a podium that rises into place
+## (staggered, last place first), each Blacksmith's Quest scores, and a shower of embers.
 func _render_game_over() -> void:
+	var win := game.winners()
 	var ranked := range(game.players.size())
-	ranked.sort_custom(func(a, b): return game.players[a].total > game.players[b].total)
-	var names := PackedStringArray()
-	for pi in game.winners():
-		names.append(game.players[pi].name)
-	action_box.add_child(FoUI.heading("%s win%s!" % [" & ".join(names), "" if names.size() > 1 else "s"], 36 if phone else 48, FoUI.GOLD))
-	for pi in ranked:
-		var p = game.players[pi]
-		var row: Container = HFlowContainer.new() if phone else HBoxContainer.new()
-		row.add_theme_constant_override("h_separation" if phone else "separation", 16)
-		var winner: bool = pi in game.winners()
-		var n := FoUI.heading(p.name, 24 if phone else 30, FoUI.GOLD if winner else FoUI.INK, false)
-		n.custom_minimum_size.x = 170 if phone else 280
-		row.add_child(n)
-		row.add_child(FoUI.label(FoGame.successes_text(p.total), 22 if phone else 28, FoUI.GOLD if winner else FoUI.INK, false))
-		row.add_child(FoUI.chip("Quests " + " · ".join(p.quest_scores.map(func(s): return str(s))), FoUI.MUTED))
-		action_box.add_child(row)
-	action_box.add_child(_big_button("New game", _show_setup))
+	ranked.sort_custom(func(a, b):
+		if (a in win) != (b in win):
+			return a in win
+		return game.players[a].total > game.players[b].total)
+	var places := []  # 0 = first; equal totals share a place (an Olive Bough winner stands alone)
+	for i in ranked.size():
+		var same: bool = i > 0 and game.players[ranked[i]].total == game.players[ranked[i - 1]].total \
+			and (ranked[i] in win) == (ranked[i - 1] in win)
+		places.append(places[i - 1] if same else i)
+	var first_time := not victory_played and _animate()
+	victory_played = true
+
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 18 if phone else 26)
+	action_box.add_child(box)
+	var names := PackedStringArray(win.map(func(pi): return game.players[pi].name))
+	var title := FoUI.heading("%s win%s" % [" & ".join(names), "" if names.size() > 1 else "s"], 44 if phone else 80, FoUI.GOLD)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(title)
+
+	var stand: BoxContainer = VBoxContainer.new() if phone else HBoxContainer.new()
+	stand.add_theme_constant_override("separation", 12 if phone else 20)
+	stand.alignment = BoxContainer.ALIGNMENT_CENTER
+	box.add_child(stand)
+	var order := range(ranked.size())
+	if not phone and order.size() >= 2:  # podium order: 2nd, 1st, 3rd, 4th
+		order = [1, 0] + range(2, ranked.size())
+	var risers := []
+	for i in order:
+		var col := _podium_column(ranked[i], places[i])
+		stand.add_child(col[0])
+		risers.append([col, places[i]])
+
+	var row = _button_row()  # HBox or HFlow: both centre with alignment 1
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	var seats := game.players.map(func(p): return p.name)
+	var bots := game.players.map(func(p): return p.is_bot)
+	var cpus := cpu.duplicate(true)
+	row.add_child(_big_button("Rematch", func(): _new_game(seats, bots, cpus)))
+	row.add_child(_big_button("New game", _show_setup))
+	box.add_child(row)
+
+	if not first_time:
+		return
+	title.pivot_offset = Vector2(_view_w() / 2, 40)
+	title.scale = Vector2(0.6, 0.6)
+	title.modulate.a = 0.0
+	var tt := title.create_tween()
+	tt.tween_interval(0.9)
+	tt.tween_property(title, "modulate:a", 1.0, 0.25)
+	tt.parallel().tween_property(title, "scale", Vector2.ONE, 0.45).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	risers.sort_custom(func(a, b): return a[1] > b[1])
+	for k in risers.size():
+		var col: Array = risers[k][0]
+		var panel: Control = col[0]
+		var block: Control = col[1]
+		var h := block.custom_minimum_size.y
+		panel.modulate.a = 0.0
+		block.custom_minimum_size.y = 0
+		var tw := panel.create_tween()
+		tw.tween_interval(0.15 + 0.22 * k)
+		tw.tween_property(panel, "modulate:a", 1.0, 0.2)
+		tw.parallel().tween_property(block, "custom_minimum_size:y", h, 0.45).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	_embers()
+
+
+## One Blacksmith on the victory podium: [column, the plinth under it (it grows in)].
+## Desktop columns stand on plinths sized by place; a phone stacks rows without them.
+func _podium_column(pi: int, place: int) -> Array:
+	var p = game.players[pi]
+	var first := place == 0
+	var metal: Color = [FoUI.GOLD, Color(0.78, 0.8, 0.86), Color(0.8, 0.5, 0.3), FoUI.EDGE][mini(place, 3)]
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 0)
+	col.size_flags_vertical = Control.SIZE_SHRINK_END
+	var card := FoUI.panel(FoUI.box(FoUI.PANEL.lerp(metal, 0.18 if first else 0.08), metal, 3 if first else 2, 16 if phone else 20))
+	col.add_child(card)
+	var v: BoxContainer = HBoxContainer.new() if phone else VBoxContainer.new()
+	v.add_theme_constant_override("separation", 14 if phone else 6)
+	card.add_child(v)
+	var place_label := FoUI.heading(["1st", "2nd", "3rd", "4th"][mini(place, 3)], 22 if phone else 26, metal, false)
+	place_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	v.add_child(place_label)
+	var name_label := FoUI.heading(p.name, 28 if phone else (40 if first else 32), FoUI.GOLD if first else FoUI.INK, false)
+	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL if phone else Control.SIZE_FILL
+	name_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	name_label.clip_text = true
+	v.add_child(name_label)
+	var total := FoUI.heading(str(p.total), 44 if phone else (110 if first else 80), FoUI.GOLD if first else FoUI.INK, false)
+	total.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	v.add_child(total)
+	var quests := HBoxContainer.new()
+	quests.add_theme_constant_override("separation", 6)
+	quests.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	for q in p.quest_scores.size():
+		var chip := FoUI.chip(str(p.quest_scores[q]), FoUI.INK, 18)
+		chip.tooltip_text = "Quest %d" % (q + 1)
+		quests.add_child(chip)
+	v.add_child(quests)
+	if not phone:
+		for c in v.get_children():
+			c.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+			if c is Label:
+				c.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		card.custom_minimum_size.x = 300 if first else 250
+	var plinth := Panel.new()
+	plinth.add_theme_stylebox_override("panel", FoUI.box(metal.darkened(0.45), metal.darkened(0.2), 2, 0))
+	plinth.custom_minimum_size.y = 0.0 if phone else [150.0, 100.0, 60.0, 30.0][mini(place, 3)]
+	plinth.visible = not phone
+	col.add_child(plinth)
+	return [col, plinth]
+
+
+## Gold and ember-orange sparks drifting down over the board: one burst for a victory.
+func _embers() -> void:
+	if fx_layer == null:
+		return
+	var w := _view_w()
+	var e := CPUParticles2D.new()
+	e.position = Vector2(w / 2, -20)
+	e.emission_shape = CPUParticles2D.EMISSION_SHAPE_RECTANGLE
+	e.emission_rect_extents = Vector2(w / 2, 10)
+	e.amount = 160
+	e.lifetime = 4.0
+	e.one_shot = true
+	e.explosiveness = 0.15
+	e.direction = Vector2(0, 1)
+	e.spread = 25.0
+	e.gravity = Vector2(0, 90)
+	e.initial_velocity_min = 60.0
+	e.initial_velocity_max = 180.0
+	e.angular_velocity_min = -180.0
+	e.angular_velocity_max = 180.0
+	e.scale_amount_min = 4.0
+	e.scale_amount_max = 9.0
+	var ramp := Gradient.new()
+	ramp.set_color(0, FoUI.GOLD)
+	ramp.set_color(1, Color(0.95, 0.35, 0.1, 0.0))
+	e.color_ramp = ramp
+	fx_layer.add_child(e)
+	e.emitting = true
+	e.finished.connect(e.queue_free)
 
 
 # ------------------------------------------------------------------ overlays
 
-## Queue results screens for Challenges and Quests that finished since the last redraw.
-## The --autoplay smoke test never shows them.
+## Announce each Quest as its draft order is set. Challenge results show on the mats instead.
 func _sync_history() -> void:
 	while history_seen < game.history.size():
-		if not autoplay:
-			results_queue.append(game.history[history_seen])
+		var e: Dictionary = game.history[history_seen]
+		if e.type == "order":
+			_show_banner("Quest %d, begin" % (e.quest + 1))
 		history_seen += 1
 
 
-## True while a results screen, zoomed card, menu or hand-off screen is up.
+## True while a zoomed card or the menu is up.
 func _blocking() -> bool:
-	return not results_queue.is_empty() or not zoom.is_empty() or menu != "" or handoff >= 0
+	return not zoom.is_empty() or menu != ""
 
 
 ## True while CPU players should wait: an overlay is open or something is animating.
 func _busy() -> bool:
-	return _blocking() or tumble_left > 0 or flights > 0
+	return _blocking() or tumble_left > 0 or flights > 0 or banner_left > 0
 
 
 func _open_zoom(card: Dictionary, challenge: bool) -> void:
@@ -1117,7 +1268,6 @@ func _render_overlay() -> void:
 	if overlay == null:
 		return
 	_clear(overlay)
-	results_detail = null
 	overlay.visible = _blocking() and (game != null or menu != "")
 	if not overlay.visible:
 		overlay_key = ""
@@ -1136,18 +1286,10 @@ func _render_overlay() -> void:
 			dim.gui_input.connect(_close_menu_on_click)
 		center.add_child(_menu_panel())
 		key = "menu"  # pages within the menu switch without a fade
-	elif not zoom.is_empty():
+	else:
 		dim.gui_input.connect(func(ev): if _is_click(ev): _close_zoom())
 		center.add_child(_zoom_panel())
 		key = "zoom:%s" % zoom.card.name
-	elif not results_queue.is_empty():
-		var entry: Dictionary = results_queue[0]
-		center.add_child(_challenge_results(entry) if entry.type == "challenge" else _quest_results(entry))
-		key = "%s:%d:%s:%d" % [entry.type, entry.quest, entry.get("kind", ""), history_seen - results_queue.size()]
-	else:
-		dim.color = Color(0.02, 0.01, 0.03, 0.96)  # mostly hide the board until they're ready
-		center.add_child(_handoff_panel())
-		key = "handoff:%d" % handoff
 	if key != overlay_key and _animate():
 		overlay.modulate.a = 0.0
 		create_tween().tween_property(overlay, "modulate:a", 1.0, FADE_TIME)
@@ -1157,7 +1299,7 @@ func _render_overlay() -> void:
 
 
 func _overlay_panel(width: float) -> Array:
-	var pnl := FoUI.panel(FoUI.box(FoUI.PANEL, FoUI.GOLD, 2, 14, 20 if phone else 26))
+	var pnl := FoUI.panel(FoUI.box(FoUI.PANEL, FoUI.GOLD, 2, 20 if phone else 26))
 	pnl.custom_minimum_size.x = minf(width, _view_w() - 32)
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 14)
@@ -1173,8 +1315,12 @@ func _zoom_panel() -> Control:
 	pb[1].add_child(row)
 	var info: Dictionary = card if zoom.challenge else data.ingredient(card.name)
 	var tex := FoAssets.challenge_art(info) if zoom.challenge else FoAssets.ingredient_art(info)
+	if zoom.challenge:
+		var accent := _kind_color(info.kind)
+		pb[0].add_theme_stylebox_override("panel", FoUI.box(FoUI.PANEL.lerp(accent, 0.16), accent, 3, 20 if phone else 26))
 	if tex != null:
-		var pic := FoUI.picture(tex, 320 if phone else 440, true)
+		var size := 320 if phone else 440
+		var pic: Control = _bobbing_picture(tex, size, info.kind) if zoom.challenge else FoUI.picture(tex, size, true)
 		pic.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		row.add_child(pic)
 	var text := VBoxContainer.new()
@@ -1183,10 +1329,9 @@ func _zoom_panel() -> Control:
 	row.add_child(text)
 	text.add_child(FoUI.heading(info.get("name", card.name), 34 if phone else 44, FoUI.GOLD))
 	if zoom.challenge:
-		text.add_child(FoUI.label("%s Challenge  ·  %s" % [info.kind, info.type], 20 if phone else 24, FoUI.MUTED))
+		text.add_child(FoUI.label(info.type, 20 if phone else 24, _kind_color(info.kind)))
 		text.add_child(FoUI.label(info.rule, 22 if phone else 26))
 	else:
-		text.add_child(FoUI.label("Ingredient", 20 if phone else 24, FoUI.MUTED))
 		text.add_child(FoUI.label(info.get("text", ""), 22 if phone else 26))
 		var where := _card_location(card)
 		if where != "":
@@ -1206,118 +1351,6 @@ func _card_location(card: Dictionary) -> String:
 	return ""
 
 
-func _challenge_results(entry: Dictionary) -> Control:
-	var pb := _overlay_panel(1560)
-	var box: VBoxContainer = pb[1]
-	var card: Dictionary = entry.card
-	box.add_child(FoUI.label("Quest %d  ·  %s Challenge" % [entry.quest + 1, entry.kind], 20,
-		FoUI.RED if entry.kind == FoGame.STRENGTH else FoUI.MAGIC))
-	box.add_child(FoUI.heading(card.name, 32 if phone else 40, FoUI.GOLD))
-	box.add_child(FoUI.label(card.rule, 18 if phone else 20))
-	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size.y = mini(620, 190 * entry.rows.size()) if phone else mini(560, 110 * entry.rows.size())
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	box.add_child(scroll)
-	var rows := VBoxContainer.new()
-	rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	rows.add_theme_constant_override("separation", 18)
-	scroll.add_child(rows)
-	var all_marks: Array[int] = []
-	var all_dice := []
-	for r in entry.rows:
-		# desktop: name | dice | result in one row; phone: name, dice, result stacked
-		var row: BoxContainer = VBoxContainer.new() if phone else HBoxContainer.new()
-		row.add_theme_constant_override("separation", 6 if phone else 16)
-		rows.add_child(row)
-		var who := FoUI.heading(game.players[r.player].name, 24, FoUI.INK, false)
-		who.custom_minimum_size.x = 0 if phone else 220
-		row.add_child(who)
-		var dice := HFlowContainer.new()
-		dice.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		dice.add_theme_constant_override("h_separation", 8)
-		dice.add_theme_constant_override("v_separation", 8)
-		row.add_child(dice)
-		for d in r.dice:
-			all_marks.append(d.mark)
-			all_dice.append(d)
-			var b := FoUI.die_face(d.value, d.mark, d.magic, d.carried, 72 if phone else 64)
-			var steps: Array = d.steps
-			var player_name: String = game.players[r.player].name
-			b.pressed.connect(func():
-				_play("click")
-				if results_detail != null:
-					results_detail.text = "%s's die:  %s" % [player_name, _breakdown_text(steps).replace("\n", "   ")])
-			dice.add_child(b)
-		var outcome: String = r.result
-		if r.note != "":
-			outcome += "\n" + r.note
-		if entry.kind == FoGame.SHARPNESS:
-			outcome += _parts_text(r.parts)
-		var color := FoUI.INK
-		if entry.kind == FoGame.STRENGTH and not r.skipped:
-			color = FoUI.GOLD if Scoring.penalty_cost(r.penalty) <= 0 else FoUI.RED
-		var res := FoUI.label(outcome, 20 if phone else 22, color)
-		res.custom_minimum_size.x = 0 if phone else 420
-		row.add_child(res)
-	var legend := _marks_legend(all_marks, entry.kind, all_dice)
-	if legend != "":
-		box.add_child(FoUI.label(legend, 16, FoUI.MUTED))
-	results_detail = FoUI.label("Tap a die to see how its value was worked out.", 18, FoUI.MUTED)
-	box.add_child(results_detail)
-	if entry.kind == FoGame.STRENGTH:
-		var what := "The boon applies" if entry.card.name == "Fiery Salamander" else "Penalties apply"
-		box.add_child(FoUI.label("%s to this Quest's Sharpness Challenge." % what, 18, FoUI.MUTED))
-	box.add_child(_big_button("Continue", _dismiss_results))
-	return pb[0]
-
-
-func _quest_results(entry: Dictionary) -> Control:
-	var pb := _overlay_panel(1100)
-	var box: VBoxContainer = pb[1]
-	box.add_child(FoUI.heading("Quest %d complete" % (entry.quest + 1) + (": final standings" if entry.final else ""), 32 if phone else 40, FoUI.GOLD))
-	var rows: Array = entry.rows.duplicate()
-	rows.sort_custom(func(a, b): return a.total > b.total)
-	var best: int = rows[0].total
-	var grid := GridContainer.new()
-	grid.columns = 3 if phone else 4  # a phone puts the wager note under "This Quest"
-	grid.add_theme_constant_override("h_separation", 20 if phone else 40)
-	grid.add_theme_constant_override("v_separation", 10)
-	box.add_child(grid)
-	for h in (["Blacksmith", "This Quest", "Total"] if phone else ["Blacksmith", "This Quest", "", "Total"]):
-		grid.add_child(FoUI.label(h, 18 if phone else 20, FoUI.MUTED, false))
-	for r in rows:
-		var leader: bool = r.total == best
-		var wager: String = "" if r.wager == 0 else "(%d from Challenge, wager %+d)" % [r.challenge, r.wager]
-		var cells := [game.players[r.player].name, FoGame.successes_text(r.score), wager, str(r.total)]
-		if phone:
-			cells = [cells[0], cells[1] + ("" if wager == "" else "\n" + wager), cells[3]]
-		for c in cells:
-			grid.add_child(FoUI.label(c, 22 if phone else 26, FoUI.GOLD if leader else FoUI.INK, false))
-	if not entry.final:
-		box.add_child(FoUI.label("Next: everyone reserves an Ingredient, then whoever scored the fewest Successes this Quest drafts first.", 20, FoUI.MUTED))
-	box.add_child(_big_button("Continue", _dismiss_results))
-	return pb[0]
-
-
-func _dismiss_results() -> void:
-	if not results_queue.is_empty():
-		results_queue.pop_front()
-
-
-## Explains the die symbols on show. `dice`: FoGame.Die objects or history dice dicts.
-func _marks_legend(marks: Array[int], kind: String, dice: Array) -> String:
-	var parts := PackedStringArray()
-	if 1 in marks:
-		parts.append("%s Gold border: %s" % [FoUI.MARK_GOOD, "scores a Success" if kind == FoGame.SHARPNESS else "protects you from the penalty (or earns the boon)"])
-	if -1 in marks:
-		parts.append("%s Red border: triggers the penalty" % FoUI.MARK_BAD)
-	if dice.any(func(d): return d.magic):
-		parts.append("%s Magic die (Sphinx's Milk)" % FoUI.MARK_MAGIC)
-	if dice.any(func(d): return d.carried):
-		parts.append("%s %s" % [FoUI.MARK_KEPT, "Kept for Sharpness" if kind == FoGame.STRENGTH else "Kept from Strength"])
-	return "   ".join(parts)
-
-
 func _breakdown_text(steps: Array) -> String:
 	var lines := PackedStringArray([steps[0].text])
 	for i in range(1, steps.size()):
@@ -1335,13 +1368,13 @@ func _parts_text(parts: Array) -> String:
 	return " (" + " + ".join(scoring.map(func(p): return "%d from %s" % [p[1], p[0]])) + ")"
 
 
-# ------------------------------------------------------------------ saving & hand-off
+# ------------------------------------------------------------------ saving
 
-## Rewrite the save whenever a move is made or a results screen is dismissed.
+## Rewrite the save whenever a move is made.
 func _autosave() -> void:
 	if not persist:
 		return
-	var state := [game.moves.size(), history_seen - results_queue.size()]
+	var state := [game.moves.size(), history_seen]
 	if state == saved:
 		return
 	saved = state
@@ -1349,53 +1382,6 @@ func _autosave() -> void:
 		FoSave.clear()
 	else:
 		FoSave.write(game, state[1], cpu)
-
-
-## Hotseat: when a decision moves to a different human, cover the board until they're ready.
-## Never for CPU turns, or with only one human at the table.
-func _check_handoff() -> void:
-	if game.phase == FoGame.Phase.GAME_OVER or game.player().is_bot:
-		return
-	var humans := game.players.filter(func(p): return not p.is_bot).size()
-	if humans >= 2 and game.current != last_human:
-		handoff = game.current
-	last_human = game.current
-
-
-func _dismiss_handoff() -> void:
-	handoff = -1
-
-
-func _handoff_panel() -> Control:
-	var p = game.players[handoff]
-	var pb := _overlay_panel(760)
-	var box: VBoxContainer = pb[1]
-	box.alignment = BoxContainer.ALIGNMENT_CENTER
-	var title := FoUI.heading("Pass to %s" % p.name, 40 if phone else 56, FoUI.GOLD)
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	box.add_child(title)
-	var what := FoUI.label("%s, it's your turn to %s." % [p.name, _turn_task()], 24, FoUI.INK)
-	what.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	box.add_child(what)
-	var go := _big_button("I'm %s, let's go" % p.name, _dismiss_handoff)
-	go.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	box.add_child(go)
-	return pb[0]
-
-
-func _turn_task() -> String:
-	match game.phase:
-		FoGame.Phase.CRAFT:
-			return "craft: draft an Ingredient, sharpen or pass"
-		FoGame.Phase.SWAP:
-			return "choose what your Rusty Bauble swaps for"
-		FoGame.Phase.WAGER:
-			return "decide whether to wager a Success"
-		FoGame.Phase.REACT:
-			return "roll for the %s Challenge" % game.challenge_kind
-		FoGame.Phase.RESERVE:
-			return "reserve an Ingredient"
-	return "play"
 
 
 # ------------------------------------------------------------------ menu & settings
@@ -1606,6 +1592,71 @@ func _rules_panel() -> Control:
 
 # ------------------------------------------------------------------ animation
 
+const BOB_HEIGHT := 5.0     # Challenge monsters float up and down this far
+const BOB_PERIOD := 2.6     # seconds per bob
+const BANNER_TIME := 1.4    # "Quest N, begin" from fade-in to gone
+
+
+## Challenge art that floats gently up and down (see `_bob`). Strength and Sharpness
+## bob out of step so the pair doesn't move as one.
+func _bobbing_picture(tex: Texture2D, size: float, kind: String) -> Control:
+	var holder := Control.new()
+	holder.custom_minimum_size = Vector2(size, size)
+	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var pic := FoUI.picture(tex, size, true)
+	pic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pic.set_meta("bob_phase", 0.0 if kind == FoGame.STRENGTH else PI)
+	holder.add_child(pic)
+	bobbers.append(pic)
+	return holder
+
+
+## Moves the bobbing art from the clock, so a redraw never restarts the motion.
+func _bob() -> void:
+	bobbers = bobbers.filter(func(b): return is_instance_valid(b) and b.is_inside_tree())
+	var still := not _animate()
+	var t := Time.get_ticks_msec() / 1000.0 * TAU / BOB_PERIOD
+	for b in bobbers:
+		b.position.y = 0.0 if still else -BOB_HEIGHT * (0.5 + 0.5 * sin(t + b.get_meta("bob_phase")))
+
+
+## A short inline title across the board (no dimming, no clicks): scales up, holds, fades.
+func _show_banner(text: String) -> void:
+	if fx_layer == null or not _animate():
+		return
+	var band := PanelContainer.new()
+	band.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	band.add_theme_stylebox_override("panel", FoUI.box(Color(0.05, 0.03, 0.06, 0.82), FoUI.GOLD, 0, 18))
+	var st: StyleBoxFlat = band.get_theme_stylebox("panel")
+	st.border_width_top = 2
+	st.border_width_bottom = 2
+	band.anchor_left = 0
+	band.anchor_right = 1
+	band.anchor_top = 0.5
+	band.anchor_bottom = 0.5
+	var l := FoUI.heading(text, 48 if phone else 72, FoUI.GOLD, false)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	band.add_child(l)
+	fx_layer.add_child(band)
+	var h := band.get_combined_minimum_size().y
+	band.offset_top = -h / 2
+	band.offset_bottom = h / 2
+	band.pivot_offset = Vector2(_view_w() / 2, h / 2)
+	band.modulate.a = 0.0
+	band.scale = Vector2(0.92, 0.92)
+	banner_left = BANNER_TIME
+	var tw := band.create_tween()
+	tw.tween_property(band, "modulate:a", 1.0, 0.2)
+	tw.parallel().tween_property(band, "scale", Vector2.ONE, 0.3).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.tween_interval(BANNER_TIME - 0.5)
+	tw.tween_property(band, "modulate:a", 0.0, 0.3)
+	tw.tween_callback(band.queue_free)
+
+
+func _kind_color(kind: String) -> Color:
+	return FoUI.RED if kind == FoGame.STRENGTH else FoUI.MAGIC
+
+
 func _animate() -> bool:
 	return not FoSettings.reduce_motion and not autoplay and is_inside_tree()
 
@@ -1761,7 +1812,6 @@ func _card_feel(t: Control, card: Dictionary, preview: bool) -> void:
 		if touching:
 			return
 		_lift(t, true)
-		_play("hover")
 		if preview:
 			_show_peek(t, card))
 	t.mouse_exited.connect(func():

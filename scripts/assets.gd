@@ -85,7 +85,6 @@ const SFX := {
 	"plus_one": ["ingredient_sounds/hammer_hit_5.mp3", 0.5],
 	"keep": ["ingredient_sounds/click_in_to_place.mp3", 0.5],
 	"copy": ["ingredient_sounds/hammer_hit_6.mp3", 0.5],
-	"hover": ["JDSherbert - Ultimate UI SFX Pack - Cursor - 3.wav", 0.15],
 	"zoom": ["JDSherbert - Ultimate UI SFX Pack - Cursor - 5.wav", 0.4],
 	"menu": ["Modern16.mp3", 0.4],
 }

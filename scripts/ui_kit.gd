@@ -35,10 +35,10 @@ static func make_theme() -> Theme:
 	t.default_font = FoAssets.font(BODY_FONT)
 	t.set_color("font_color", "Label", INK)
 	var states := {
-		"normal": box(PANEL_LIGHT, EDGE, 1, 8, 10),
-		"hover": box(PANEL_LIGHT.lightened(0.08), GOLD, 2, 8, 10),
-		"pressed": box(PANEL_LIGHT.darkened(0.2), GOLD, 2, 8, 10),
-		"disabled": box(PANEL.darkened(0.2), EDGE.darkened(0.3), 1, 8, 10),
+		"normal": box(PANEL_LIGHT, EDGE, 1, 10),
+		"hover": box(PANEL_LIGHT.lightened(0.08), GOLD, 2, 10),
+		"pressed": box(PANEL_LIGHT.darkened(0.2), GOLD, 2, 10),
+		"disabled": box(PANEL.darkened(0.2), EDGE.darkened(0.3), 1, 10),
 		"focus": StyleBoxEmpty.new(),
 	}
 	for s in states:
@@ -47,8 +47,8 @@ static func make_theme() -> Theme:
 	t.set_color("font_hover_color", "Button", GOLD)
 	t.set_color("font_pressed_color", "Button", GOLD)
 	t.set_color("font_disabled_color", "Button", MUTED.darkened(0.3))
-	t.set_stylebox("normal", "LineEdit", box(PANEL, EDGE, 1, 6, 8))
-	t.set_stylebox("focus", "LineEdit", box(PANEL, GOLD, 2, 6, 8))
+	t.set_stylebox("normal", "LineEdit", box(PANEL, EDGE, 1, 8))
+	t.set_stylebox("focus", "LineEdit", box(PANEL, GOLD, 2, 8))
 	t.set_stylebox("panel", "PanelContainer", box(PANEL, EDGE))
 	return t
 
@@ -58,14 +58,13 @@ static func fs(size: int) -> int:
 	return roundi(size * FoSettings.text_scale())
 
 
-static func box(bg: Color, border := EDGE, width := 1, radius := 10, margin := 12) -> StyleBoxFlat:
+static func box(bg: Color, border := EDGE, width := 1, margin := 12) -> StyleBoxFlat:
 	var s := StyleBoxFlat.new()
 	s.bg_color = bg
 	s.border_color = border
 	s.set_border_width_all(width)
-	s.set_corner_radius_all(radius)
 	s.set_content_margin_all(margin)
-	s.anti_aliasing = true
+	s.anti_aliasing = false  # square corners everywhere: nothing to smooth
 	return s
 
 
@@ -130,11 +129,10 @@ static func card_tile(title: String, body: String, tex: Texture2D, size := TILE,
 	b.custom_minimum_size = size
 	b.clip_contents = true
 	var small := size.x < 120
-	var radius := 6 if small else 10
-	b.add_theme_stylebox_override("normal", box(PANEL_LIGHT, edge, 2 if edge != EDGE else 1, radius, 0))
-	b.add_theme_stylebox_override("hover", box(PANEL_LIGHT.lightened(0.08), GOLD, 2, radius, 0))
-	b.add_theme_stylebox_override("pressed", box(PANEL_LIGHT.darkened(0.2), GOLD, 2, radius, 0))
-	b.add_theme_stylebox_override("disabled", box(PANEL_LIGHT, edge, 2 if edge != EDGE else 1, radius, 0))
+	b.add_theme_stylebox_override("normal", box(PANEL_LIGHT, edge, 2 if edge != EDGE else 1, 0))
+	b.add_theme_stylebox_override("hover", box(PANEL_LIGHT.lightened(0.08), GOLD, 2, 0))
+	b.add_theme_stylebox_override("pressed", box(PANEL_LIGHT.darkened(0.2), GOLD, 2, 0))
+	b.add_theme_stylebox_override("disabled", box(PANEL_LIGHT, edge, 2 if edge != EDGE else 1, 0))
 	var v := VBoxContainer.new()
 	v.set_anchors_preset(Control.PRESET_FULL_RECT)
 	var pad := 4 if small else 8
@@ -167,7 +165,7 @@ static func card_tile(title: String, body: String, tex: Texture2D, size := TILE,
 	return b
 
 
-## A small round "i" button pinned to a tile's top-right corner. The circle is small, but
+## A small "i" button pinned to a tile's top-right corner. The circle is small, but
 ## the tap area is a 72 px square (44 pt on an iPad) so a near miss doesn't hit the tile.
 static func corner_button(parent: Control, text: String) -> Button:
 	var hit := 72
@@ -185,8 +183,8 @@ static func corner_button(parent: Control, text: String) -> Button:
 	dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	dot.position = Vector2(hit - dot_size - 6, 6)
 	dot.size = Vector2(dot_size, dot_size)
-	var idle := box(PANEL.darkened(0.3), EDGE, 1, dot_size / 2, 0)
-	var lit := box(PANEL_LIGHT, GOLD, 1, dot_size / 2, 0)
+	var idle := box(PANEL.darkened(0.3), EDGE, 1, 0)
+	var lit := box(PANEL_LIGHT, GOLD, 1, 0)
 	dot.add_theme_stylebox_override("panel", idle)
 	i.mouse_entered.connect(func(): dot.add_theme_stylebox_override("panel", lit))
 	i.mouse_exited.connect(func(): dot.add_theme_stylebox_override("panel", idle))
@@ -222,7 +220,7 @@ static func die_face(value: int, mark: int, magic: bool, carried: bool, size: fl
 		-1:
 			border = RED
 			width = 6
-	var style := box(bg, border, width, int(size * 0.18), 0)
+	var style := box(bg, border, width, 0)
 	style.shadow_color = Color(0, 0, 0, 0.45)
 	style.shadow_size = 4
 	style.shadow_offset = Vector2(0, 3)
@@ -271,14 +269,14 @@ static func pips(filled: int, total: int, color := GOLD) -> HBoxContainer:
 		var p := Panel.new()
 		p.custom_minimum_size = Vector2(14, 14)
 		p.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		p.add_theme_stylebox_override("panel", box(color if i < filled else PANEL, color, 1, 3, 0))
+		p.add_theme_stylebox_override("panel", box(color if i < filled else PANEL, color, 1, 0))
 		row.add_child(p)
 	return row
 
 
-## A short label in a rounded box, e.g. "AP 3".
+## A short label in a box, e.g. "AP 3".
 static func chip(text: String, color := INK, size := 17) -> PanelContainer:
-	var p := panel(box(PANEL.darkened(0.25), EDGE, 1, 12, 0))
+	var p := panel(box(PANEL.darkened(0.25), EDGE, 1, 0))
 	var st: StyleBoxFlat = p.get_theme_stylebox("panel")
 	st.content_margin_left = 10
 	st.content_margin_right = 10

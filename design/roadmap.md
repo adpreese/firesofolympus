@@ -12,8 +12,9 @@ online multiplayer, and character portraits.
       large art and full text. Replaces hover tooltips, which never show on touch.
 - [x] Dice math breakdown: for each die show rolled value → Effects → Modifiers → Reactions → final,
       and what it contributes (Successes, penalty triggers). Uses the order in `rules_interpretations.md`.
-- [x] Challenge results screen: after each Challenge, everyone's final dice, Successes or penalties.
-- [x] Quest results screen: per-player Successes this Quest, running totals, and next Quest's turn order.
+- [x] Challenge results: each Blacksmith's final dice and outcome appear on their mat as they finish
+      (replaced the Challenge / Quest / draft-order results screens: no modals for transitions).
+- [x] Quest transitions: an inline "Quest N, begin" banner, no click needed.
 - [x] Rules engine exposes the breakdown as data (pure, unit-tested) and the UI only displays it.
 
 ## Milestone 2: Styled layout, light animation
@@ -27,9 +28,8 @@ online multiplayer, and character portraits.
       and replayed on load (`FoGame.replay`), so the bot must never draw from `game.rng`.
 - [x] Pause menu: resume, restart, quit to title, rules reference, settings
       (SFX/music volume, CPU speed, text size, reduced motion).
-- [x] Hotseat hand-off: a "Pass to <name>" screen only when control moves from one human to a
-      *different* human. Never shown for CPU turns or in solo play. Also shown for the first
-      human decision of a hotseat game, new or resumed.
+- [x] ~~Hotseat hand-off screen~~ removed: no modals for transitions, and the board holds no
+      hidden information. The lit mat and the turn strip show whose decision it is.
 
 ## Milestone 4: CPU opponents
 - [x] Difficulty levels: Easy (noisy heuristic), Normal (current bot), Hard (Monte Carlo lookahead

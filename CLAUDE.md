@@ -36,7 +36,9 @@ Targets: Web (primary for playtesting) and iOS. Landscape 1920x1080 base, `canva
     (rollouts on `FoGame.clone()` with reseeded dice) is spread over frames. Never draws from `g.rng`.
 - `scripts/main.gd` — pass-and-play UI built in code; only reads FoGame state and forwards clicks
   (sounds fire by diffing FoGame state between redraws, so CPU moves are audible too)
-  Results screens come from `FoGame.history`; CPU turns wait while an overlay (results, zoom, menu, hand-off) is open.
+  Challenge results show on the mats (`FoGame.quest_rows`); a new Quest gets an inline banner from `FoGame.history`.
+  No modals for screens or transitions (only card zoom and the menu); keep in-game text terse; square corners.
+  CPU turns wait while an overlay (zoom, menu) is open or the banner is up.
   Die explanations come from `FoGame.die_breakdown` (same code path as `die_value`).
 - `scripts/ui_kit.gd` (FoUI) — the look: colours, global Theme, card tiles, dice, chips. No game logic.
   Animations (dice tumble, card flights, overlay fades) live in main.gd, are skipped when

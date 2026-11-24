@@ -1,7 +1,7 @@
 extends "res://tests/test_case.gd"
 ## Renders every human-facing screen (seats marked human, but the bot picks the moves),
 ## so UI code paths for each phase run without script errors. Odd seeds seat one human
-## and CPUs (no hand-off screens); even seeds are all-human hotseat.
+## and CPUs; even seeds are all-human hotseat. Nothing but a card zoom ever covers the board.
 
 
 func test_render_every_phase() -> void:
@@ -17,25 +17,16 @@ func test_render_every_phase() -> void:
 		ui._start_game()
 		var g: FoGame = ui.game
 		var steps := 0
-		var shown := {}
-		var handoffs := 0
+		var on_mats := 0
 		while g.phase != FoGame.Phase.GAME_OVER and steps < 5000:
 			seen[g.phase] = true
 			ok(ui.action_box.get_child_count() > 0, "phase %d rendered nothing" % g.phase)
 			if g.phase == FoGame.Phase.REACT and not g.player().dice.is_empty():
 				ui.selected_die = 0  # the die-breakdown label
 				ui._refresh()
-			if not ui.results_queue.is_empty():
-				ok(ui.overlay.visible and ui.overlay.get_child_count() > 0, "results overlay shown")
-				shown[ui.results_queue[0].type] = true
-				ui._dismiss_results()
-				ui._refresh()
-			if ui.handoff >= 0:
-				eq(ui.handoff, g.current, "hand-off to whoever decides next")
-				ok(not g.player().is_bot and ui.overlay.visible, "hand-off shown for a human")
-				handoffs += 1
-				ui._dismiss_handoff()
-				ui._refresh()
+			ok(not ui.overlay.visible and not ui._blocking(), "seed %d: no modal between moves" % s)
+			for pi in g.players.size():
+				on_mats += g.quest_rows(pi).size()
 			if steps == 3:
 				if not g.market.is_empty():
 					ui._open_zoom(g.market[0], false)
@@ -48,12 +39,8 @@ func test_render_every_phase() -> void:
 			steps += 1
 		ok(g.phase == FoGame.Phase.GAME_OVER, "seed %d finished" % s)
 		eq([ui.flights, ui.tumble_left], [0, 0.0], "seed %d: no animation runs outside the tree" % s)
-		eq(ui.history_seen, 9, "seed %d: every Challenge and Quest reached the UI" % s)
-		ok(shown.has("challenge") and shown.has("quest"), "seed %d: both results screens rendered" % s)
-		if hotseat:
-			ok(handoffs > 3, "seed %d: hotseat hands off (%d)" % [s, handoffs])
-		else:
-			eq(handoffs, 0, "seed %d: no hand-off with one human" % s)
+		eq(ui.history_seen, 12, "seed %d: every draft order, Challenge and Quest reached the UI" % s)
+		ok(on_mats > 0, "seed %d: Challenge results shown on the mats" % s)
 		ui.free()
 	for ph in [FoGame.Phase.CRAFT, FoGame.Phase.SWAP, FoGame.Phase.WAGER, FoGame.Phase.REACT, FoGame.Phase.RESERVE]:
 		ok(seen.has(ph), "phase %d never rendered" % ph)
@@ -86,9 +73,7 @@ func test_menu_pages() -> void:
 		ui._close_menu()
 		ok(not ui.overlay.visible, "title %s closed" % page)
 	ui._start_game()
-	ui._dismiss_handoff()
-	ui._refresh()
-	ok(not ui._blocking(), "game starts unblocked")
+	ok(not ui._blocking() and not ui.overlay.visible, "game opens straight onto the board")
 	ui._open_menu("pause")
 	ok(ui._busy() and ui.overlay.visible, "pause blocks CPU turns")
 	for page in ["settings", "rules"]:
@@ -115,9 +100,8 @@ func test_enter_saved_game() -> void:
 	ui.data = data
 	ui._show_setup()
 	ui._enter_game(r, r.history.size())
-	ok(ui.results_queue.is_empty(), "seen results stay dismissed")
-	if not r.player().is_bot:
-		eq(ui.handoff, r.current, "resuming a hotseat game asks for the right player")
+	ok(not ui._blocking() and not ui.overlay.visible, "a resumed game opens on the board")
+	eq(ui.history_seen, r.history.size(), "old results aren't announced again")
 	ui.free()
 
 
@@ -147,14 +131,6 @@ func test_phone_layout_fits() -> void:
 		ok(ui.phone_pages.size() == 2 and ui.top_bar != null, "seed %d: phone board built" % s)
 		var steps := 0
 		while g.phase != FoGame.Phase.GAME_OVER and steps < 5000:
-			if not ui.results_queue.is_empty():
-				_fits(ui, ui.overlay.get_child(1).get_child(0), limit, "%s results" % ui.results_queue[0].type)
-				ui._dismiss_results()
-				ui._refresh()
-			if ui.handoff >= 0:
-				_fits(ui, ui.overlay.get_child(1).get_child(0), limit, "hand-off")
-				ui._dismiss_handoff()
-				ui._refresh()
 			if not g.player().is_bot:
 				eq(ui.phone_tab, "table", "seed %d: a human's turn shows the Table" % s)
 				ui._show_tab("players")  # look at the mats; the next decision brings the Table back
