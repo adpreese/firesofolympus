@@ -10,11 +10,12 @@ func test_render_every_phase() -> void:
 		var ui: Control = load("res://scripts/main.gd").new()
 		ui.data = CardData.load_default()
 		ui._show_setup()
-		ui._set_player_count(2 + s % 3)
+		var n := 2 + s % 3
 		var hotseat := s % 2 == 0
-		for i in ui.seat_rows.size():
-			ui.seat_rows[i][2].button_pressed = not hotseat and i > 0
+		ui._set_counts(n if hotseat else 1, 0 if hotseat else n - 1)
+		seed(s)  # seats are shuffled with the global RNG
 		ui._start_game()
+		eq(ui.game.players.size(), n, "seed %d: %d seats" % [s, n])
 		var g: FoGame = ui.game
 		var steps := 0
 		var on_mats := 0
@@ -24,6 +25,12 @@ func test_render_every_phase() -> void:
 			if g.phase == FoGame.Phase.REACT and not g.player().dice.is_empty():
 				ui.selected_die = 0  # the die-breakdown label
 				ui._refresh()
+				var reactions := g.available_reactions(g.current)
+				if not reactions.is_empty():  # choosing a Reaction says what tapping a die does
+					ui.selected_reaction = reactions[0].key
+					ui._refresh()
+					seen["hint"] = _has_text(ui.action_box, "Tap a die to")
+					ui.selected_reaction = ""
 			ok(not ui.overlay.visible and not ui._blocking(), "seed %d: no modal between moves" % s)
 			for pi in g.players.size():
 				on_mats += g.quest_rows(pi).size()
@@ -42,6 +49,7 @@ func test_render_every_phase() -> void:
 		eq(ui.history_seen, 12, "seed %d: every draft order, Challenge and Quest reached the UI" % s)
 		ok(on_mats > 0, "seed %d: Challenge results shown on the mats" % s)
 		ui.free()
+	ok(seen.get("hint", false), "a chosen Reaction shows a tap hint")
 	for ph in [FoGame.Phase.CRAFT, FoGame.Phase.SWAP, FoGame.Phase.WAGER, FoGame.Phase.REACT, FoGame.Phase.RESERVE]:
 		ok(seen.has(ph), "phase %d never rendered" % ph)
 
@@ -58,7 +66,11 @@ func test_title_screen() -> void:
 	g.setup(["Ann", "Cpu"], [false, true], 3)
 	ui.resume = [g, 0, []]
 	ui._show_setup()
-	ok(not ui.on_title and ui.seat_rows.size() == 4, "seat setup shown")
+	ok(not ui.on_title and ui.setup_box.get_child_count() > 0, "seat setup shown")
+	ui._set_counts(4, 3)
+	eq([ui.setup_humans, ui.setup_cpus], [4, 0], "CPUs trimmed to fit 4 seats")
+	ui._set_counts(1, 0)
+	eq([ui.setup_humans, ui.setup_cpus], [1, 1], "at least 2 seats")
 	ui._show_title()
 	ui.free()
 
@@ -117,15 +129,15 @@ func test_phone_layout_fits() -> void:
 		ui._show_title()
 		_fits(ui, ui.get_child(ui.get_child_count() - 2), limit, "title")
 		ui._show_setup()
-		ui._set_player_count(2 + s % 3)
+		var n := 2 + s % 3
 		var hotseat := s % 2 == 0
-		for i in ui.seat_rows.size():
-			ui.seat_rows[i][2].button_pressed = not hotseat and i > 0
+		ui._set_counts(n if hotseat else 1, 0 if hotseat else n - 1)
 		_fits(ui, ui.get_child(1).get_child(0).get_child(0), limit, "setup")
 		for page in ["settings", "rules"]:
 			ui._open_menu(page)
 			_fits(ui, ui.overlay.get_child(1).get_child(0), limit, "title " + page)
 			ui._close_menu()
+		seed(s)
 		ui._start_game()
 		var g: FoGame = ui.game
 		ok(ui.phone_pages.size() == 2 and ui.top_bar != null, "seed %d: phone board built" % s)
@@ -162,3 +174,9 @@ func test_phone_layout_fits() -> void:
 func _fits(_ui: Control, c: Control, limit: float, what: String) -> void:
 	var w := c.get_combined_minimum_size().x
 	ok(w <= limit, "%s is %d px wide on a phone (max %d)" % [what, w, limit])
+
+
+func _has_text(n: Node, prefix: String) -> bool:
+	if n is Label and n.text.begins_with(prefix):
+		return true
+	return n.get_children().any(func(c): return _has_text(c, prefix))

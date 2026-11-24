@@ -3,18 +3,31 @@ extends RefCounted
 ## The game's look: colours, the global Theme, and constructors for styled widgets
 ## (card tiles, dice, panels). Presentation only: no FoGame access, no game logic.
 
-const GOLD := Color(1.0, 0.75, 0.35)
-const RED := Color(0.95, 0.38, 0.32)
-const INK := Color(0.94, 0.9, 0.84)
-const MUTED := Color(0.68, 0.63, 0.7)
-const MAGIC := Color(0.5, 0.8, 1.0)
-const KEPT := Color(1.0, 0.85, 0.3)
-const RESERVE := Color(0.45, 0.75, 0.65)
-const PANEL := Color(0.14, 0.1, 0.16)
-const PANEL_LIGHT := Color(0.21, 0.16, 0.24)
-const EDGE := Color(0.38, 0.31, 0.42)
-const BG_TOP := Color(0.13, 0.07, 0.12)
-const BG_BOTTOM := Color(0.03, 0.02, 0.05)
+## Parchment palette, after the React Native prototype (design/prototype/notes.md):
+## brown ink on tan and cream, thick dark outlines, flat fills; red = Strength and primary
+## actions, navy = Sharpness, green = gains.
+const INK := Color("#2B1D14")       # text, outlines, rules
+const CREAM := Color("#E6D4B2")     # card faces, raised panels, text on coloured fills
+const TAN := Color("#D1B88F")       # the table and ordinary panels
+const OCHRE := Color("#C2A36B")     # the dice tray
+const UMBER := Color("#3C3426")     # ordinary buttons
+const OXBLOOD := Color("#9A2B2B")   # Strength, primary buttons, the current turn
+const NAVY := Color("#2C4A82")      # Sharpness
+const IVORY := Color("#FBF4DE")     # die faces
+
+const GOLD := OXBLOOD               # accent: headings, the current turn, highlights
+const RED := Color("#B3261E")       # penalties, Strength text
+const GOOD := Color("#3F7A30")      # Successes, dice gained
+const INK_LIGHT := CREAM            # text on OXBLOOD / NAVY / UMBER fills
+const MUTED := Color("#6E5A43")     # secondary text (darker than the prototype's #8B7355 for contrast on tan)
+const MAGIC := NAVY
+const KEPT := Color("#8A5A10")
+const RESERVE := GOOD
+const PANEL := TAN
+const PANEL_LIGHT := CREAM
+const EDGE := INK
+const BG_TOP := TAN
+const BG_BOTTOM := Color("#C8AC7F")
 const HEADING_FONT := "Cinzel-Bold.ttf"
 const BODY_FONT := "SourceSerif4-Regular.ttf"
 const BOLD_FONT := "SourceSerif4-SemiBold.ttf"
@@ -34,23 +47,79 @@ static func make_theme() -> Theme:
 	t.default_font_size = fs(22)
 	t.default_font = FoAssets.font(BODY_FONT)
 	t.set_color("font_color", "Label", INK)
+	# Buttons: umber with cream text. Pressed / toggled on (a selected option) is cream with a
+	# heavy outline, so a choice never looks like the oxblood call to action (`primary`).
 	var states := {
-		"normal": box(PANEL_LIGHT, EDGE, 1, 10),
-		"hover": box(PANEL_LIGHT.lightened(0.08), GOLD, 2, 10),
-		"pressed": box(PANEL_LIGHT.darkened(0.2), GOLD, 2, 10),
-		"disabled": box(PANEL.darkened(0.2), EDGE.darkened(0.3), 1, 10),
+		"normal": box(UMBER, INK, 2, 10),
+		"hover": box(UMBER.lightened(0.14), INK, 2, 10),
+		"pressed": box(CREAM, INK, 4, 10),
+		"hover_pressed": box(CREAM.lightened(0.2), INK, 4, 10),
+		"disabled": box(TAN.darkened(0.06), MUTED, 2, 10),
 		"focus": StyleBoxEmpty.new(),
 	}
 	for s in states:
 		t.set_stylebox(s, "Button", states[s])
-	t.set_color("font_color", "Button", INK)
-	t.set_color("font_hover_color", "Button", GOLD)
-	t.set_color("font_pressed_color", "Button", GOLD)
-	t.set_color("font_disabled_color", "Button", MUTED.darkened(0.3))
-	t.set_stylebox("normal", "LineEdit", box(PANEL, EDGE, 1, 8))
-	t.set_stylebox("focus", "LineEdit", box(PANEL, GOLD, 2, 8))
-	t.set_stylebox("panel", "PanelContainer", box(PANEL, EDGE))
+	for c in ["font_color", "font_hover_color", "font_focus_color"]:
+		t.set_color(c, "Button", CREAM)
+	for c in ["font_pressed_color", "font_hover_pressed_color"]:
+		t.set_color(c, "Button", INK)
+	t.set_color("font_disabled_color", "Button", MUTED)
+	t.set_stylebox("normal", "LineEdit", box(CREAM, INK, 2, 8))
+	t.set_stylebox("focus", "LineEdit", box(CREAM, OXBLOOD, 2, 8))
+	t.set_color("font_color", "LineEdit", INK)
+	t.set_color("font_placeholder_color", "LineEdit", MUTED)
+	t.set_color("caret_color", "LineEdit", INK)
+	t.set_color("selection_color", "LineEdit", Color(OXBLOOD, 0.35))
+	for state in ["", "_disabled"]:  # the default icons are dark: invisible on umber buttons
+		t.set_icon("checked" + state, "CheckBox", _check_icon(true))
+		t.set_icon("unchecked" + state, "CheckBox", _check_icon(false))
+	t.set_stylebox("panel", "PanelContainer", box(PANEL, EDGE, 2))
+	t.set_stylebox("panel", "PopupMenu", box(CREAM, INK, 2, 6))
+	t.set_stylebox("hover", "PopupMenu", box(OXBLOOD, OXBLOOD, 0, 4))
+	t.set_color("font_color", "PopupMenu", INK)
+	t.set_color("font_hover_color", "PopupMenu", CREAM)
+	t.set_stylebox("panel", "TooltipPanel", box(CREAM, INK, 2, 8))
+	t.set_color("font_color", "TooltipLabel", INK)
+	for bar in ["VScrollBar", "HScrollBar"]:
+		t.set_stylebox("scroll", bar, box(Color(INK, 0.12), INK, 0, 4))
+		t.set_stylebox("grabber", bar, box(UMBER, UMBER, 0, 4))
+		t.set_stylebox("grabber_highlight", bar, box(UMBER.lightened(0.14), UMBER, 0, 4))
+		t.set_stylebox("grabber_pressed", bar, box(OXBLOOD, OXBLOOD, 0, 4))
+	var groove := box(UMBER, INK, 0, 0)
+	groove.content_margin_top = 4
+	groove.content_margin_bottom = 4
+	t.set_stylebox("slider", "HSlider", groove)
+	var fill := box(OXBLOOD, INK, 0, 0)
+	fill.content_margin_top = 4
+	fill.content_margin_bottom = 4
+	t.set_stylebox("grabber_area", "HSlider", fill)
+	t.set_stylebox("grabber_area_highlight", "HSlider", fill)
 	return t
+
+
+## A square cream check box icon: an outline, filled in when checked.
+static func _check_icon(on: bool) -> ImageTexture:
+	var n := 22
+	var img := Image.create(n, n, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	for y in n:
+		for x in n:
+			var edge := x < 3 or y < 3 or x >= n - 3 or y >= n - 3
+			var inner := x >= 6 and y >= 6 and x < n - 6 and y < n - 6
+			if edge or (on and inner):
+				img.set_pixel(x, y, CREAM)
+	return ImageTexture.create_from_image(img)
+
+
+## Restyle a button as a primary action: oxblood fill (like the prototype's Sharpen bar).
+static func primary(b: Button) -> Button:
+	var styles := {"normal": OXBLOOD, "hover": OXBLOOD.lightened(0.12), "pressed": OXBLOOD.darkened(0.25),
+		"hover_pressed": OXBLOOD.darkened(0.15)}
+	for st in styles:
+		b.add_theme_stylebox_override(st, box(styles[st], INK, 2, 10))
+	for c in ["font_pressed_color", "font_hover_pressed_color"]:
+		b.add_theme_color_override(c, CREAM)
+	return b
 
 
 ## A font size scaled by the player's text size setting.
@@ -129,10 +198,11 @@ static func card_tile(title: String, body: String, tex: Texture2D, size := TILE,
 	b.custom_minimum_size = size
 	b.clip_contents = true
 	var small := size.x < 120
-	b.add_theme_stylebox_override("normal", box(PANEL_LIGHT, edge, 2 if edge != EDGE else 1, 0))
-	b.add_theme_stylebox_override("hover", box(PANEL_LIGHT.lightened(0.08), GOLD, 2, 0))
-	b.add_theme_stylebox_override("pressed", box(PANEL_LIGHT.darkened(0.2), GOLD, 2, 0))
-	b.add_theme_stylebox_override("disabled", box(PANEL_LIGHT, edge, 2 if edge != EDGE else 1, 0))
+	var width := 2 if edge == EDGE else 4
+	b.add_theme_stylebox_override("normal", box(CREAM, edge, width, 0))
+	b.add_theme_stylebox_override("hover", box(CREAM.lightened(0.25), OXBLOOD, maxi(width, 3), 0))
+	b.add_theme_stylebox_override("pressed", box(CREAM.darkened(0.08), OXBLOOD, maxi(width, 3), 0))
+	b.add_theme_stylebox_override("disabled", box(CREAM, edge, width, 0))
 	var v := VBoxContainer.new()
 	v.set_anchors_preset(Control.PRESET_FULL_RECT)
 	var pad := 4 if small else 8
@@ -151,7 +221,7 @@ static func card_tile(title: String, body: String, tex: Texture2D, size := TILE,
 		blank.custom_minimum_size = Vector2(art_size, art_size)
 		v.add_child(blank)
 	# Tile text stays at its base size (the tile can't grow); the zoom view is for reading.
-	var name_label := heading(title, 11 if small else 16, GOLD)
+	var name_label := heading(title, 11 if small else 16, INK)
 	name_label.add_theme_font_size_override("font_size", 11 if small else 16)
 	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(name_label)
@@ -165,70 +235,41 @@ static func card_tile(title: String, body: String, tex: Texture2D, size := TILE,
 	return b
 
 
-## A small "i" button pinned to a tile's top-right corner. The circle is small, but
-## the tap area is a 72 px square (44 pt on an iPad) so a near miss doesn't hit the tile.
-static func corner_button(parent: Control, text: String) -> Button:
-	var hit := 72
-	var dot_size := 34
-	var i := Button.new()
-	for st in ["normal", "hover", "pressed", "focus", "disabled"]:
-		i.add_theme_stylebox_override(st, StyleBoxEmpty.new())
-	i.anchor_left = 1
-	i.anchor_right = 1
-	i.offset_left = -hit
-	i.offset_right = 0
-	i.offset_top = 0
-	i.offset_bottom = hit
-	var dot := Panel.new()
-	dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	dot.position = Vector2(hit - dot_size - 6, 6)
-	dot.size = Vector2(dot_size, dot_size)
-	var idle := box(PANEL.darkened(0.3), EDGE, 1, 0)
-	var lit := box(PANEL_LIGHT, GOLD, 1, 0)
-	dot.add_theme_stylebox_override("panel", idle)
-	i.mouse_entered.connect(func(): dot.add_theme_stylebox_override("panel", lit))
-	i.mouse_exited.connect(func(): dot.add_theme_stylebox_override("panel", idle))
-	var l := Label.new()
-	l.text = text
-	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	l.add_theme_font_size_override("font_size", 16)
-	l.add_theme_color_override("font_color", INK)
-	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	l.set_anchors_preset(Control.PRESET_FULL_RECT)
-	dot.add_child(l)
-	i.add_child(dot)
-	parent.add_child(i)
-	return i
-
-
-## One die face. mark: 1 = scores / protects (gold, thick border), -1 = triggers a penalty (red).
-static func die_face(value: int, mark: int, magic: bool, carried: bool, size: float, selected := false) -> Button:
+## One die face. mark: 1 = scores / protects (green, thick border), -1 = triggers a penalty (red).
+## armed: a Reaction is chosen and this die can take it (oxblood outline, hover lifts).
+static func die_face(value: int, mark: int, magic: bool, carried: bool, size: float, selected := false, armed := false) -> Button:
 	var b := Button.new()
 	b.text = str(value)
 	b.custom_minimum_size = Vector2(size, size)
 	b.pivot_offset = Vector2(size, size) / 2
 	b.add_theme_font_size_override("font_size", int(size * 0.45))
 	b.add_theme_font_override("font", FoAssets.font(BOLD_FONT))
-	var bg := Color(0.93, 0.89, 0.82) if not selected else Color(1.0, 0.95, 0.75)
-	var border := Color(0.5, 0.42, 0.38)
+	var bg := IVORY if not selected else Color("#F3D98C")
+	var border := INK
 	var width := 2
 	match mark:
 		1:
-			border = GOLD
+			border = GOOD
 			width = 6
 		-1:
 			border = RED
 			width = 6
+	if armed and mark == 0:
+		border = OXBLOOD
+		width = 4
 	var style := box(bg, border, width, 0)
-	style.shadow_color = Color(0, 0, 0, 0.45)
-	style.shadow_size = 4
-	style.shadow_offset = Vector2(0, 3)
+	style.shadow_color = Color(INK, 0.35)
+	style.shadow_size = 0
+	style.shadow_offset = Vector2(3, 3)
 	for state in ["normal", "hover", "pressed", "disabled", "focus"]:
 		b.add_theme_stylebox_override(state, style)
-	var magic_ink := Color(0.1, 0.35, 0.75)
-	var kept_ink := Color(0.6, 0.38, 0.0)
-	var ink := Color(0.15, 0.1, 0.12)
+	if armed:
+		var lit := box(Color("#F3D98C"), OXBLOOD if mark == 0 else border, width, 0)
+		b.add_theme_stylebox_override("hover", lit)
+		b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	var magic_ink := NAVY
+	var kept_ink := KEPT
+	var ink := INK
 	if magic:
 		ink = magic_ink
 	if carried:
@@ -236,7 +277,7 @@ static func die_face(value: int, mark: int, magic: bool, carried: bool, size: fl
 	for c in ["font_color", "font_hover_color", "font_pressed_color", "font_disabled_color", "font_focus_color"]:
 		b.add_theme_color_override(c, ink)
 	if mark != 0:
-		_die_badge(b, MARK_GOOD if mark == 1 else MARK_BAD, Color(0.55, 0.38, 0.0) if mark == 1 else Color(0.75, 0.12, 0.1), size, Vector2(1, 0))
+		_die_badge(b, MARK_GOOD if mark == 1 else MARK_BAD, GOOD if mark == 1 else RED, size, Vector2(1, 0))
 	if magic:
 		_die_badge(b, MARK_MAGIC, magic_ink, size, Vector2(0, 1))
 	if carried:
@@ -269,14 +310,14 @@ static func pips(filled: int, total: int, color := GOLD) -> HBoxContainer:
 		var p := Panel.new()
 		p.custom_minimum_size = Vector2(14, 14)
 		p.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		p.add_theme_stylebox_override("panel", box(color if i < filled else PANEL, color, 1, 0))
+		p.add_theme_stylebox_override("panel", box(color if i < filled else CREAM, INK if i >= filled else color, 2, 0))
 		row.add_child(p)
 	return row
 
 
 ## A short label in a box, e.g. "AP 3".
 static func chip(text: String, color := INK, size := 17) -> PanelContainer:
-	var p := panel(box(PANEL.darkened(0.25), EDGE, 1, 0))
+	var p := panel(box(CREAM, EDGE, 1, 0))
 	var st: StyleBoxFlat = p.get_theme_stylebox("panel")
 	st.content_margin_left = 10
 	st.content_margin_right = 10

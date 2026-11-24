@@ -41,6 +41,10 @@ Targets: Web (primary for playtesting) and iOS. Landscape 1920x1080 base, `canva
   CPU turns wait while an overlay (zoom, menu) is open or the banner is up.
   Die explanations come from `FoGame.die_breakdown` (same code path as `die_value`).
 - `scripts/ui_kit.gd` (FoUI) — the look: colours, global Theme, card tiles, dice, chips. No game logic.
+  Parchment palette from the prototype (`design/prototype/notes.md` + screenshots): `INK` text/outlines,
+  `TAN`/`CREAM` surfaces, `UMBER` buttons, `OXBLOOD` (= `GOLD` accent) Strength + primaries (`FoUI.primary`),
+  `NAVY` Sharpness, `GOOD` green gains. Cream (`INK_LIGHT`) text on coloured fills.
+  Selected options (toggled buttons) are cream with a heavy outline: never the oxblood CTA colour.
   Animations (dice tumble, card flights, overlay fades) live in main.gd, are skipped when
   `FoSettings.reduce_motion`, `--autoplay` or not in the tree, and CPU turns wait for them (`_busy()`).
 - `scripts/save.gd` (FoSave) — single save slot `user://save.json`: names, bots, seed and `FoGame.moves`.
@@ -55,6 +59,10 @@ Targets: Web (primary for playtesting) and iOS. Landscape 1920x1080 base, `canva
   Pixel art is nearest-upscaled at load. Web export excludes the duplicate music `.ogg`.
 - `tools/make_art.gd` — regenerates `icon.png` (App Store icon, no alpha) and `assets/splash.png`
   (boot splash / iOS launch image): `godot --headless --script res://tools/make_art.gd`
+- Desktop board: capped at `DESK_BOARD_W` (1320) and centred; Challenge cards (name / portrait / rule)
+  in a column left of the action area: both while drafting, the live one large while it's played,
+  Strength hidden once Sharpness starts. New game = counts only (people, CPUs, difficulty); CPUs get
+  random personas and seats are shuffled with the global RNG (tests call `seed()` first).
 - Phone layout: a portrait window switches main.gd to `phone` mode: 640x1136 design size
   (`PHONE_SIZE`, set as the root's content scale size), one column, Table / Blacksmiths tabs.
   It switches live on rotate. Force it with `?layout=phone|desktop` on the web build or

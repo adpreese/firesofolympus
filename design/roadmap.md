@@ -21,6 +21,8 @@ online multiplayer, and character portraits.
 - [x] Themed panels: player mats with card art, a market area, and Challenge cards as cards rather than text.
 - [x] Tweens: cards move market → player, dice tumble before showing values, results fade in.
 - [x] Respect a reduced-motion setting (now in Settings).
+- [x] Parchment look from the React Native prototype (`design/prototype/notes.md`): brown ink on tan / cream,
+      solid red Strength and navy Sharpness tiles, umber buttons with oxblood primaries, ochre dice tray.
 
 ## Milestone 3: Game flow
 - [x] Save / resume: autosave after every action, "Continue" on the title screen; survives a
