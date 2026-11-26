@@ -21,6 +21,11 @@ online multiplayer, and character portraits.
 - [x] Themed panels: player mats with card art, a market area, and Challenge cards as cards rather than text.
 - [x] Tweens: cards move market → player, dice tumble before showing values, results fade in.
 - [x] Respect a reduced-motion setting (now in Settings).
+- [x] Juicy dice reveal: dice land one by one, Effects and Modifiers tick across them with floating ±N,
+      scoring dice pop with rising pitch, penalty dice crunch with falling pitch and a shake, and the
+      result counts up (or a Strength penalty slams down). Reactions replay just the dice they change.
+- [x] Victory treasure: a fan of light and a spark fountain behind the winner's plinth, then the winner's
+      Ingredients burst out trailing streaks and circle their card.
 - [x] Parchment look from the React Native prototype (`design/prototype/notes.md`): brown ink on tan / cream,
       solid red Strength and navy Sharpness tiles, umber buttons with oxblood primaries, ochre dice tray.
 

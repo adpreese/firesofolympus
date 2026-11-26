@@ -22,7 +22,7 @@ const ART_ALIASES := {
 }
 
 ## Ingredients the spreadsheet names art for, but no image exists yet.
-const MISSING_ART := ["Dragon Tooth", "Rusty Bauble", "Leather Grip", "Jeweled Scabbard"]
+const MISSING_ART := []
 
 ## Sound played when an Ingredient is drafted (from the prototype's ingredients.ts).
 const INGREDIENT_SOUNDS := {
@@ -85,6 +85,13 @@ const SFX := {
 	"plus_one": ["ingredient_sounds/hammer_hit_5.mp3", 0.5],
 	"keep": ["ingredient_sounds/click_in_to_place.mp3", 0.5],
 	"copy": ["ingredient_sounds/hammer_hit_6.mp3", 0.5],
+	# the dice reveal (main.gd plays these at rising pitch for good news, falling for bad)
+	"die_land": ["ingredient_sounds/click_in_to_place.mp3", 0.3],
+	"die_step": ["Modern8.mp3", 0.3],
+	"die_good": ["JDSherbert - Ultimate UI SFX Pack - Cursor - 3.wav", 0.45],
+	"die_bad": ["ingredient_sounds/hammer_hit_2.mp3", 0.45],
+	"tally": ["Coin Dropped on Ceramic Dish.wav", 0.3],
+	"penalty": ["ingredient_sounds/hammer_hit_4.mp3", 0.65],
 	"zoom": ["JDSherbert - Ultimate UI SFX Pack - Cursor - 5.wav", 0.4],
 	"menu": ["Modern16.mp3", 0.4],
 }

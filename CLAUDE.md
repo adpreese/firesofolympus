@@ -42,10 +42,18 @@ Targets: Web (primary for playtesting) and iOS. Landscape 1920x1080 base, `canva
   Die explanations come from `FoGame.die_breakdown` (same code path as `die_value`).
 - `scripts/ui_kit.gd` (FoUI) — the look: colours, global Theme, card tiles, dice, chips. No game logic.
   Parchment palette from the prototype (`design/prototype/notes.md` + screenshots): `INK` text/outlines,
-  `TAN`/`CREAM` surfaces, `UMBER` buttons, `OXBLOOD` (= `GOLD` accent) Strength + primaries (`FoUI.primary`),
+  `TAN`/`CREAM` surfaces, `UMBER` buttons, `OXBLOOD` (= `GOLD`, menu headings) Strength only,
+  `INK` for "act here" (primaries `FoUI.primary`, the current turn's mat / chip; `FoUI.secondary` = outlined),
   `NAVY` Sharpness, `GOOD` green gains. Cream (`INK_LIGHT`) text on coloured fills.
-  Selected options (toggled buttons) are cream with a heavy outline: never the oxblood CTA colour.
-  Animations (dice tumble, card flights, overlay fades) live in main.gd, are skipped when
+  Selected options (toggled buttons) are cream with a heavy outline: never the filled ink CTA.
+  Dice reveal (`_start_reveal`): the dice are thrown into a tall tray and bounce off its walls and
+  each other (`_tumble`, cosmetic physics in `reveal.phys`), land, snap into a centred row, then
+  breakdown steps with floating ±N → ✓ dice pop (pitch rising) then × dice crunch (pitch falling, tray shakes) → the result
+  line counts up, or a Strength penalty slams down. A Reaction replays only the dice it changed.
+  Victory (`_treasure_burst`): light beams on `back_layer` (under the board), a spark fountain, and the
+  winner's Ingredients thrown out of the podium, then orbiting their card (`_trophies`, on `trophy_layer`,
+  kept the last child of `fx_layer` so the treasure is always on top; the far side of the orbit shrinks and dims).
+  Animations (dice reveal, card flights, overlay fades) live in main.gd, are skipped when
   `FoSettings.reduce_motion`, `--autoplay` or not in the tree, and CPU turns wait for them (`_busy()`).
 - `scripts/save.gd` (FoSave) — single save slot `user://save.json`: names, bots, seed and `FoGame.moves`.
   Loading replays the moves (`FoGame.replay`); a save whose moves no longer apply is ignored.
@@ -59,6 +67,7 @@ Targets: Web (primary for playtesting) and iOS. Landscape 1920x1080 base, `canva
   Pixel art is nearest-upscaled at load. Web export excludes the duplicate music `.ogg`.
 - `tools/make_art.gd` — regenerates `icon.png` (App Store icon, no alpha) and `assets/splash.png`
   (boot splash / iOS launch image): `godot --headless --script res://tools/make_art.gd`
+- Desktop mats: the current player's mat is raised by `MAT_LIFT` (animated) with a drop shadow.
 - Desktop board: capped at `DESK_BOARD_W` (1320) and centred; Challenge cards (name / portrait / rule)
   in a column left of the action area: both while drafting, the live one large while it's played,
   Strength hidden once Sharpness starts. New game = counts only (people, CPUs, difficulty); CPUs get

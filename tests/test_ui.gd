@@ -45,7 +45,7 @@ func test_render_every_phase() -> void:
 			ui._refresh()
 			steps += 1
 		ok(g.phase == FoGame.Phase.GAME_OVER, "seed %d finished" % s)
-		eq([ui.flights, ui.tumble_left], [0, 0.0], "seed %d: no animation runs outside the tree" % s)
+		eq([ui.flights, ui.reveal.is_empty(), ui.fx_left], [0, true, 0.0], "seed %d: no animation runs outside the tree" % s)
 		eq(ui.history_seen, 12, "seed %d: every draft order, Challenge and Quest reached the UI" % s)
 		ok(on_mats > 0, "seed %d: Challenge results shown on the mats" % s)
 		ui.free()
