@@ -159,7 +159,12 @@ func _want_phone() -> bool:
 
 func _apply_layout_size() -> void:
 	if is_inside_tree():
-		get_tree().root.content_scale_size = PHONE_SIZE if phone else DESK_SIZE
+		var root := get_tree().root
+		root.content_scale_size = PHONE_SIZE if phone else DESK_SIZE
+		# Phone keeps its 640 width: taller phones gain height, and a wide window (e.g. a desktop
+		# browser with ?layout=phone) shows a phone-shaped column instead of stretching sideways.
+		root.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_KEEP_WIDTH if phone \
+			else Window.CONTENT_SCALE_ASPECT_EXPAND
 
 
 ## Rotating a phone, or resizing a browser window past square, swaps layouts.
