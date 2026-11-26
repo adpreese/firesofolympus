@@ -183,24 +183,51 @@ static func picture(tex: Texture2D, size: float, crisp := false) -> TextureRect:
 	return r
 
 
-## Full-screen vertical gradient behind everything.
-static func background() -> TextureRect:
-	var g := Gradient.new()
-	g.set_color(0, BG_TOP)
-	g.set_color(1, BG_BOTTOM)
-	var gt := GradientTexture2D.new()
-	gt.gradient = g
-	gt.fill_from = Vector2(0.5, 0)
-	gt.fill_to = Vector2(0.5, 1)
-	gt.width = 64
-	gt.height = 64
-	var r := TextureRect.new()
-	r.texture = gt
-	r.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	r.stretch_mode = TextureRect.STRETCH_SCALE
+## Full-screen playmat behind everything: a centred column `frame_span` wide (0 = the whole screen)
+## of lattice inside an egg-and-dart frame `frame_w` deep, with dark bars either side like the title art.
+## Keep the board clear of the frame.
+static func background(frame_w := 28.0, frame_span := 0.0) -> Playmat:
+	var r := Playmat.new()
+	r.frame_w = frame_w
+	r.frame_span = frame_span
 	r.set_anchors_preset(Control.PRESET_FULL_RECT)
 	r.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return r
+
+
+## The SVGs are imported at 2x (svg/scale) so they stay crisp on high-DPI screens;
+## the frame is a nine-slice (tools/make_playmat_frame.py) whose edges repeat whole eggs.
+class Playmat extends Control:
+	const LATTICE := preload("res://assets/images/table/lattice.svg")
+	const FRAME := preload("res://assets/images/table/frame.svg")
+	const TEX_SCALE := 2.0
+	const FRAME_SRC := 28.0  # frame depth in the SVG
+	var frame_w := 28.0
+	var frame_span := 0.0
+	var _box := StyleBoxTexture.new()
+
+	func _init() -> void:
+		texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
+		texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+		_box.texture = FRAME
+		_box.draw_center = false
+		_box.set_texture_margin_all(FRAME_SRC * TEX_SCALE)
+		_box.axis_stretch_horizontal = StyleBoxTexture.AXIS_STRETCH_MODE_TILE_FIT
+		_box.axis_stretch_vertical = StyleBoxTexture.AXIS_STRETCH_MODE_TILE_FIT
+		resized.connect(queue_redraw)
+
+	func _draw() -> void:
+		# Outside the framed column: the title screen's dark bars (FoUI.INK = main.gd TITLE_BARS).
+		var w := size.x if frame_span <= 0.0 else minf(frame_span, size.x)
+		var x := (size.x - w) / 2.0
+		if x > 0.0:
+			draw_rect(Rect2(Vector2.ZERO, size), FoUI.INK)
+		var k := 1.0 / TEX_SCALE
+		draw_set_transform(Vector2(x, 0.0), 0.0, Vector2(k, k))
+		draw_texture_rect(LATTICE, Rect2(Vector2.ZERO, Vector2(w, size.y) / k), true)
+		var f := frame_w / (FRAME_SRC * TEX_SCALE)
+		draw_set_transform(Vector2(x, 0.0), 0.0, Vector2(f, f))
+		draw_style_box(_box, Rect2(Vector2.ZERO, Vector2(w, size.y) / f))
 
 
 const GILT := Color("#D4A640")    # a card's dice count (a gold die)

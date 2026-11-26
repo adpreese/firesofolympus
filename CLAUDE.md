@@ -46,6 +46,10 @@ Targets: Web (primary for playtesting) and iOS. Landscape 1920x1080 base, `canva
   `INK` for "act here" (primaries `FoUI.primary`, the current turn's mat / chip; `FoUI.secondary` = outlined),
   `NAVY` Sharpness, `GOOD` green gains. Cream (`INK_LIGHT`) text on coloured fills.
   Selected options (toggled buttons) are cream with a heavy outline: never the filled ink CTA.
+  Playmat (`FoUI.background(frame_w)` → `FoUI.Playmat`): `assets/images/table/lattice.svg` tiled, inside an
+  egg-and-dart nine-slice `frame.svg` (regenerate with `python3 tools/make_playmat_frame.py`). Both SVGs are
+  imported at 2x with mipmaps and drawn at half scale. On desktop the lattice and 28 px frame cover only the
+  centred table (`_frame_span`) with `INK` bars either side, like the title art; on phone a 14 px frame runs round the screen.
   Dice reveal (`_start_reveal`): the dice are thrown into a tall tray and bounce off its walls and
   each other (`_tumble`, cosmetic physics in `reveal.phys`), land, snap into a centred row, then
   breakdown steps with floating ±N → ✓ dice pop (pitch rising) then × dice crunch (pitch falling, tray shakes) → the result

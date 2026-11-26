@@ -152,9 +152,20 @@ func _apply_safe_area() -> void:
 			insets = [safe.position.x * k.x, safe.position.y * k.y,
 				maxf(0, win.x - safe.end.x) * k.x, maxf(0, win.y - safe.end.y) * k.y]
 	var sides := ["left", "top", "right", "bottom"]
+	var edge := 16 if phone else int(_frame_w()) + 8  # clear of the playmat frame
 	for i in 4:
-		board_margin.add_theme_constant_override("margin_" + sides[i], 16 + int(insets[i]))
+		board_margin.add_theme_constant_override("margin_" + sides[i], edge + int(insets[i]))
 
+
+## Depth of the playmat's egg-and-dart frame: thinner on phones, where width is tight.
+func _frame_w() -> float:
+	return 14.0 if phone else 28.0
+
+
+## The frame goes round the centred desktop table (DESK_BOARD_W plus the margin either side);
+## on phones it runs round the whole screen.
+func _frame_span() -> float:
+	return 0.0 if phone else DESK_BOARD_W + 2.0 * (_frame_w() + 8.0)
 
 
 ## `--phone` / `--desktop` on the command line, or `?layout=phone|desktop` in the page URL.
@@ -380,7 +391,7 @@ func _show_setup() -> void:
 	_leave_game()
 	on_title = false
 	_clear(self)
-	add_child(FoUI.background())
+	add_child(FoUI.background(_frame_w(), _frame_span()))
 	var scroll := ScrollContainer.new()  # only scrolls at large text sizes
 	scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -547,7 +558,7 @@ func _build_board() -> void:
 	_reset_flights()
 	banner_left = 0.0  # the fx layer (and any banner on it) is rebuilt
 	_clear(self)
-	add_child(FoUI.background())
+	add_child(FoUI.background(_frame_w(), _frame_span()))
 	back_layer = Control.new()
 	back_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
 	back_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
