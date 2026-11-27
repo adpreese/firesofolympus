@@ -73,7 +73,8 @@ the reading below. Every item was reviewed with the designer on 2026-11-22.
 - Razor Mantis "each 6" counts results of 6 or higher (results can exceed 6).
 - Vampire Bat counts pairs per value: four 3s = 2 Successes. Matches the rules example (2,2,6 → 1).
 - Killer Bee counts disjoint pairs adding to 7.
-- Ice Dragon: floor(total / 10), never below 0.
+- Ice Dragon: floor(total / 10), never below 0. The reveal ticks the die that takes the running total (left to right) past each multiple of 10.
+- Kraken: the reveal ticks every die when the total beats 20 and crunches every die when it doesn't (or Kraken Blood forces the penalty).
 - Fiery Salamander (a Strength card with a boon instead of a penalty): if your final results include
   three consecutive values (e.g. 3, 4, 5; duplicates don't matter), you get an extra Sharpness die
   showing 6 this Quest. Modifiers apply to it and Reactions can reroll it; dice-loss penalties can't remove it.

@@ -36,24 +36,35 @@ Targets: Web (primary for playtesting) and iOS. Landscape 1920x1080 base, `canva
     (rollouts on `FoGame.clone()` with reseeded dice) is spread over frames. Never draws from `g.rng`.
 - `scripts/main.gd` — pass-and-play UI built in code; only reads FoGame state and forwards clicks
   (sounds fire by diffing FoGame state between redraws, so CPU moves are audible too)
-  Challenge results show on the mats (`FoGame.quest_rows`); a new Quest gets an inline banner from `FoGame.history`.
+  Challenge results show on the mats (`FoGame.quest_rows`); a new Quest gets a banner from `FoGame.history` (`_show_banner`: table fades to black, spaced gold Cinzel title, Dark Souls style).
   No modals for screens or transitions (only card zoom and the menu); keep in-game text terse; square corners.
   CPU turns wait while an overlay (zoom, menu) is open or the banner is up.
   Die explanations come from `FoGame.die_breakdown` (same code path as `die_value`).
 - `scripts/ui_kit.gd` (FoUI) — the look: colours, global Theme, card tiles, dice, chips. No game logic.
+  Dice counts and AP are never shown as "2d6" / "+1 AP" text: `FoUI.StatMark` (gold die / silver diamond, a Texture2D)
+  is the single drawing for both; `stat_chip` (Control), `stat_mark` (Button icon), `rich()` (text with "+2D6" / "-1 AP" swapped for tokens).
   Parchment palette from the prototype (`design/prototype/notes.md` + screenshots): `INK` text/outlines,
   `TAN`/`CREAM` surfaces, `UMBER` buttons, `OXBLOOD` (= `GOLD`, menu headings) Strength only,
-  `INK` for "act here" (primaries `FoUI.primary`, the current turn's mat / chip; `FoUI.secondary` = outlined),
+  `INK` for "act here" (primaries `FoUI.primary`, the current turn's mat / chip; `FoUI.secondary` = cream, outlined),
   `NAVY` Sharpness, `GOOD` green gains. Cream (`INK_LIGHT`) text on coloured fills.
-  Selected options (toggled buttons) are cream with a heavy outline: never the filled ink CTA.
-  Playmat (`FoUI.background(frame_w)` → `FoUI.Playmat`): `assets/images/table/lattice.svg` tiled, inside an
-  egg-and-dart nine-slice `frame.svg` (regenerate with `python3 tools/make_playmat_frame.py`). Both SVGs are
-  imported at 2x with mipmaps and drawn at half scale. On desktop the lattice and 28 px frame cover only the
+  Option sets (setup counts, settings, phone tabs, Reactions) use `FoUI.option`: off is quiet tan with a thin
+  outline and muted text, on is cream with a heavy outline; never the filled ink CTA. One `primary` per screen;
+  `UMBER` is kept lighter than `INK` so the primary stands out. Result lines: `GOOD` for Successes / no penalty, `RED` for a penalty.
+  Card text follows the text size setting (`FoUI.card_text()`): the rules well grows, the art gives way.
+  Dice clicks and step pops go through `_play_spaced` (`DIE_CLICK_GAP` / `DIE_STEP_GAP`) so bursts don't turn to noise.
+  Playmat (`FoUI.background(frame_w)` → `FoUI.Playmat`): `assets/images/table/lattice.png` (barley-twist bars, ray-cast at 2x by
+  `godot --headless --script res://tools/make_lattice.gd`) tiled, inside an egg-and-dart nine-slice `frame.svg`
+  (regenerate with `python3 tools/make_playmat_frame.py`, imported at 2x). Both have mipmaps and are drawn at half scale. On desktop the lattice and 28 px frame cover only the
   centred table (`_frame_span`) with `INK` bars either side, like the title art; on phone a 14 px frame runs round the screen.
-  Dice reveal (`_start_reveal`): the dice are thrown into a tall tray and bounce off its walls and
+  Dice reveal (`_start_reveal`): the tray has a name bar in the Challenge colour ("Melaina rolls", `_tray_label`).
+  A person's full roll waits in the hand: hold Roll (or Space / Enter) to shake, release to throw, harder
+  the longer it was held (`_roll_down` / `_roll_up`); CPUs throw at once. The dice are thrown into a tall tray and bounce off its walls and
   each other (`_tumble`, cosmetic physics in `reveal.phys`), land, snap into a centred row, then
   breakdown steps with floating ±N → ✓ dice pop (pitch rising) then × dice crunch (pitch falling, tray shakes) → the result
   line counts up, or a Strength penalty slams down. A Reaction replays only the dice it changed.
+  Quest scored (`_tally_quest`, from the "quest" history entry once the last reveal ends): mats tally lowest
+  score first (+N rises off the total, a coin per Success), then the top scorer's mat gets sparks and the anvil;
+  the church bell rings as each Quest starts.
   Victory (`_treasure_burst`): light beams on `back_layer` (under the board), a spark fountain, and the
   winner's Ingredients thrown out of the podium, then orbiting their card (`_trophies`, on `trophy_layer`,
   kept the last child of `fx_layer` so the treasure is always on top; the far side of the orbit shrinks and dims).

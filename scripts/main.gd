@@ -17,6 +17,10 @@ const TUMBLE_MIN := 0.45   # a thrown die can't settle before this
 const TUMBLE_MAX := 2.2    # every die has landed by then
 const SETTLE_PAUSE := 0.22 # all dice still, then they snap into a row
 const SNAP_TIME := 0.3
+const HOLD_FULL := 0.9     # holding Roll this long shakes the dice as hard as they go
+const RATTLE_GAP := 0.11   # dice knocking together in the hand while Roll is held
+const DIE_CLICK_GAP := 0.09 # dice clicks (hits, landings) closer than this are dropped
+const DIE_STEP_GAP := 0.1   # breakdown step pops closer than this are dropped
 const DIE_GAP := 10.0      # between dice in the row (the HFlow separation)
 const STEP_GAP := 0.32     # each round of Effects / Modifiers / Reactions on the settled dice
 const MARK_GAP := 0.14     # scoring dice light up one by one, pitch rising
@@ -40,7 +44,7 @@ var setup_level: int = FoBot.Level.NORMAL
 var setup_box: VBoxContainer    # the setup screen's rows, rebuilt when a count changes
 var players_box: BoxContainer   # a row along the bottom; a column on the phone's Blacksmiths tab
 var order_strip: Container      # HBox; an HFlow on a phone
-const MATS_HEIGHT := 300.0      # the row of player mats along the bottom
+const MATS_HEIGHT := 268.0      # the row of player mats along the bottom (a full mat scrolls)
 const MAT_LIFT := 26.0          # the current player's mat sits this much higher than the rest
 const QUEUE_LEN := 8            # crafting turns shown in the draft-order strip
 const PHONE_QUEUE_LEN := 5
@@ -49,7 +53,7 @@ const PHONE_QUEUE_LEN := 5
 ## 1920x1080: 640 px across a ~390 pt phone keeps 72 px taps near 44 pt and text readable.
 const DESK_SIZE := Vector2i(1920, 1080)
 const DESK_BOARD_W := 1320.0    # the desktop table is no wider than this, centred
-const CHALLENGE_COL_W := 300.0  # the desktop column of Challenge cards
+const CHALLENGE_COL_W := 340.0  # the desktop column of Challenge cards
 const PHONE_SIZE := Vector2i(640, 1136)
 const PHONE_TABS := [["table", "Table"], ["players", "Blacksmiths"]]
 var phone := false             # single-column layout; picked from the window shape in _ready
@@ -63,10 +67,12 @@ var header: VBoxContainer
 var challenge_box: BoxContainer  # the Challenge cards: a column beside the table; a row on a phone
 var mats_area: Control           # the mats (desktop) / the tabs (phone): hidden on the victory screen
 var action_box: VBoxContainer
+var action_foot: VBoxContainer  # desktop: rows pinned under the scrolling action area (Sharpen / Pass)
 var audio_root: Node  # survives _clear(self) so music keeps playing across screens
 var music: AudioStreamPlayer
 var sfx: Array[AudioStreamPlayer] = []
 var sfx_next := 0
+var sfx_last := {}  # event -> when it last played (s), for _play_spaced
 var last_snap := {}
 var quitting := false
 
@@ -76,6 +82,10 @@ var back_layer: Control        # victory light beams, under the board
 var trophy_layer: Control      # orbiting treasure: kept the last child of fx_layer so nothing covers it
 var history_seen := 0          # FoGame.history entries already announced (Quest banners)
 var banner_left := 0.0         # a "Quest N, begin" banner is showing; CPU turns wait
+var score_fx := {}             # a finished Quest (its "quest" history entry) waiting to be tallied on the mats
+var tally_left := 0.0          # the Quest tally is playing; CPU turns wait
+var mat_nodes := {}            # seat -> its mat this render (anchors for the Quest tally)
+var total_nodes := {}          # seat -> its Successes heading (or name row) on the mat
 var bobbers: Array = []        # bobbing Challenge art (see _bob)
 var victory_played := false    # the victory screen has animated in once this game
 var trophies: Array = []       # the winner's Ingredients flying round the podium (see _trophies)
@@ -238,12 +248,18 @@ func _process(delta: float) -> void:
 		return
 	if roll_pending and not _blocking():
 		roll_pending = false
-		_play("roll")
+		_play("roll", 1.0, lerpf(0.45, 1.0, clampf(game.player().dice.size() / 8.0, 0.0, 1.0)))
 		_haptic(40)
 	if not reveal.is_empty() and not _blocking():
 		_advance_reveal(delta)
 	if fx_left > 0:
 		fx_left = maxf(0.0, fx_left - delta)
+	if tally_left > 0:
+		tally_left = maxf(0.0, tally_left - delta)
+	if not score_fx.is_empty() and not _blocking() and reveal.is_empty() and fx_left <= 0 and flights == 0:
+		var e := score_fx
+		score_fx = {}
+		_tally_quest(e)
 	_bob()
 	if not trophies.is_empty():
 		_trophies(delta)
@@ -304,7 +320,7 @@ func _show_title() -> void:
 	grid.add_theme_constant_override("h_separation", 24)
 	grid.add_theme_constant_override("v_separation", 20)
 	col.add_child(grid)
-	grid.add_child(_menu_button("New game", FoUI.OXBLOOD, func():
+	grid.add_child(_menu_button("New game", FoUI.INK, func():
 		_play("toggle")
 		_haptic(30)
 		_show_setup(), false))
@@ -377,6 +393,7 @@ func _leave_game() -> void:
 	_reset_flights()
 	game = null
 	action_box = null
+	action_foot = null
 	overlay = null
 	menu = ""
 	zoom = {}
@@ -412,7 +429,7 @@ func _show_setup() -> void:
 
 func _render_setup() -> void:
 	_clear(setup_box)
-	var title := FoUI.heading("New game", 56, FoUI.INK)
+	var title := FoUI.heading("New game", 56, FoUI.GOLD)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	setup_box.add_child(title)
 	setup_box.add_child(_gap(4))
@@ -472,7 +489,7 @@ func _setup_row(grid: GridContainer, text: String, values: Array, current: int, 
 	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	for i in values.size():
 		var v: int = values[i]
-		var b := Button.new()
+		var b := FoUI.option(Button.new())
 		b.text = names[i] if not names.is_empty() else str(v)
 		b.toggle_mode = true
 		b.button_pressed = v == current
@@ -542,6 +559,8 @@ func _enter_game(g: FoGame, seen: int, cpus: Array = []) -> void:
 	reveal = {}
 	result_fx = {}
 	fx_left = 0.0
+	score_fx = {}
+	tally_left = 0.0
 	card_nodes = {}
 	roll_pending = false
 	overlay_key = ""
@@ -618,7 +637,14 @@ func _build_desk_board(root: VBoxContainer) -> void:
 	action_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	action_box.add_theme_constant_override("separation", 12)
 	scroll.add_child(action_box)
-	table.add_child(scroll)
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var right := VBoxContainer.new()  # the market scrolls; its buttons stay in view below it
+	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	right.add_theme_constant_override("separation", 12)
+	right.add_child(scroll)
+	action_foot = VBoxContainer.new()
+	right.add_child(action_foot)
+	table.add_child(right)
 	mid.add_child(table)
 	root.add_child(mid)
 
@@ -654,7 +680,7 @@ func _build_phone_board(root: VBoxContainer) -> void:
 	var group := ButtonGroup.new()
 	tab_buttons = {}
 	for t in PHONE_TABS:
-		var b := Button.new()
+		var b := FoUI.option(Button.new())
 		b.text = t[1]
 		b.toggle_mode = true
 		b.button_group = group
@@ -680,6 +706,7 @@ func _build_phone_board(root: VBoxContainer) -> void:
 	action_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	action_box.add_theme_constant_override("separation", 12)
 	tv.add_child(action_box)
+	action_foot = null
 	table.add_child(tv)
 
 	var mats := _page_scroll()
@@ -767,7 +794,13 @@ func _render_header() -> void:
 		_play("menu")
 		_open_menu("pause"))
 	top.add_child(menu_button)
-	bar.add_child(top)
+	# its own solid band, so the title doesn't sit on the playmat; no padding top or bottom
+	# (the desktop table has only a few px to spare), the Menu button flush with the right edge
+	var sb := FoUI.box(FoUI.PANEL_LIGHT, FoUI.INK, 2, 0)
+	sb.content_margin_left = 12 if phone else 16
+	var band := FoUI.panel(sb)
+	band.add_child(top)
+	bar.add_child(band)
 	_clear(challenge_box)
 	var over := game.phase == FoGame.Phase.GAME_OVER  # the victory screen gets the whole table
 	challenge_box.visible = not over
@@ -809,12 +842,12 @@ func _challenge_panel(card: Dictionary, size: String) -> Control:
 	v.add_child(kind_label)
 	var tex := FoAssets.challenge_art(card)
 	if tex != null:
-		# desktop: two normal cards fill the column's height; a phone's cards sit side by side
-		var art: float = ({"small": 64.0, "normal": 150.0, "large": 190.0} if phone else {"small": 64.0, "normal": 150.0, "large": 220.0})[size]
+		# desktop: sized so the column fits a 1080-high screen above the mats; a phone's cards sit side by side
+		var art: float = ({"small": 64.0, "normal": 150.0, "large": 190.0} if phone else {"small": 64.0, "normal": 80.0, "large": 150.0})[size]
 		var pic := _bobbing_picture(tex, art, card.kind)
 		pic.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		v.add_child(pic)
-	var rule := FoUI.label(card.rule, 15 if small else (20 if large else 18), ink)
+	var rule := FoUI.rich(card.rule, 15 if small else (20 if large else 18), ink)
 	rule.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(rule)
 	if phone:  # a phone card is cramped; tapping shows the whole card
@@ -826,6 +859,8 @@ func _challenge_panel(card: Dictionary, size: String) -> Control:
 
 func _render_players() -> void:
 	_clear(players_box)
+	mat_nodes = {}
+	total_nodes = {}
 	var up: int = game.current if game.phase != FoGame.Phase.GAME_OVER else -1
 	var was_up := lifted
 	lifted = up
@@ -969,9 +1004,13 @@ func _player_mat(pi: int) -> Control:
 	top.add_child(name_label)
 	if p.is_bot:
 		top.add_child(FoUI.label("CPU", 14, FoUI.MUTED, false))
+	total_nodes[pi] = top
 	if p.total > 0:
-		top.add_child(FoUI.heading(FoGame.successes_text(p.total), 20, FoUI.GOOD, false))
+		var total := FoUI.heading(FoGame.successes_text(p.total), 20, FoUI.GOOD, false)
+		top.add_child(total)
+		total_nodes[pi] = total
 	v.add_child(top)
+	mat_nodes[pi] = mat
 
 	# AP, then each dice pool in its Challenge's colour (sharpenings sit with Sharpness)
 	var stats := HFlowContainer.new()
@@ -1067,11 +1106,14 @@ func _result_row(r: Dictionary) -> Control:
 		color = FoUI.GOOD if Scoring.penalty_cost(r.penalty) <= 0 else FoUI.RED
 	elif r.kind == FoGame.SHARPNESS:
 		color = FoUI.GOOD if r.successes > 0 else FoUI.MUTED
-	var res := FoUI.label(r.result, 16, color, false)
+	var res := FoUI.rich(r.result, 16, color, false)
 	res.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	res.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	res.clip_text = true
-	res.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	res.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	res.fit_content = false  # one line, cut at the strip's edge rather than widening the mat
+	res.clip_contents = true
+	res.custom_minimum_size.y = FoUI.fs(16) * 1.6
+	res.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	row.add_child(res)
 	return strip
 
@@ -1092,6 +1134,9 @@ func _mini_card(c: Dictionary, zone: String, reserved: bool) -> Control:
 
 func _render_actions() -> void:
 	_clear(action_box)
+	if action_foot != null:
+		_clear(action_foot)
+		action_foot.visible = false
 	dice_nodes = []
 	if game.phase == FoGame.Phase.GAME_OVER:
 		_render_game_over()
@@ -1148,22 +1193,34 @@ func _render_craft() -> void:
 	var ap := _ap_meter(p.ap)
 	ap.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	row.add_child(ap)
-	var sharpen_text := "Sharpen"
-	if p.sharpen < FoGame.SHARPEN_DICE.size():
-		sharpen_text += "  +%dd6" % (FoGame.SHARPEN_DICE[p.sharpen] + game.flag_sum(game.current, "electrum"))
-	var sb := FoUI.primary(_big_button(sharpen_text, func(): game.act_sharpen()))
+	var sb := FoUI.primary(_big_button("Sharpen", func(): game.act_sharpen()))
+	if p.sharpen < FoGame.SHARPEN_DICE.size():  # the dice it adds, as the cards show them
+		sb.icon = FoUI.stat_mark(FoGame.SHARPEN_DICE[p.sharpen] + game.flag_sum(game.current, "electrum"), true, 30)
+		sb.icon_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	sb.disabled = not game.can_sharpen(game.current)
 	row.add_child(sb)
 	row.add_child(FoUI.secondary(_big_button("Pass", func(): game.act_pass())))
-	action_box.add_child(row)
+	if action_foot != null:  # desktop: pinned under the market, so a tall market can't hide it
+		action_foot.visible = true
+		action_foot.add_child(row)
+	else:
+		action_box.add_child(row)
 
 
 func _render_react() -> void:
 	_render_dice(true)
 	var rv := _live_reveal()
+	if _waiting_to_throw():
+		action_box.add_child(_roll_button(game.player().dice.size()))
+		return
 	if rv.get("full", false):
 		return  # the result line arrives once every die has settled
-	var head := FoUI.heading(rv.get("old_text", _result_text()), 22, FoUI.GOLD)
+	var said: String = rv.get("old_text", _result_text())
+	var head: Control
+	if FoUI.stat_runs(said).any(func(run): return run is Dictionary):  # "-1D6 on Sharpness": a die token
+		head = FoUI.rich(said, 22, _result_color(), true, HORIZONTAL_ALIGNMENT_LEFT, FoAssets.font(FoUI.HEADING_FONT))
+	else:
+		head = FoUI.heading(said, 22, _result_color())
 	action_box.add_child(head)
 	if not result_fx.is_empty():
 		_result_fx(head, result_fx)
@@ -1178,6 +1235,7 @@ func _render_react() -> void:
 			var b := _button("%s: %s ×%d" % [r.card, verb, r.left], func(): selected_reaction = r.key)
 			if phone:  # full width, wrapping, so long card names never run off the screen
 				b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			FoUI.option(b)
 			b.toggle_mode = true
 			b.button_pressed = r.key == selected_reaction
 			if r.key == selected_reaction:
@@ -1197,6 +1255,14 @@ func _render_react() -> void:
 
 
 ## The result line under the dice: "2 Successes (…)" or the Strength penalty.
+## The result line's colour: green for Successes or no penalty, red for a penalty, ink for 0.
+func _result_color() -> Color:
+	var e := game.evaluate(game.current, game.challenge_kind)
+	if game.challenge_kind == FoGame.STRENGTH:
+		return FoUI.GOOD if Scoring.penalty_cost(e) <= 0 else FoUI.RED
+	return FoUI.GOOD if e.successes > 0 else FoUI.INK
+
+
 func _result_text() -> String:
 	var card := game.challenge_card(game.challenge_kind)
 	var vals := game.values(game.current, game.challenge_kind)
@@ -1243,7 +1309,7 @@ func _render_dice(clickable: bool) -> void:
 		var armed := clickable and rv.is_empty() and selected_reaction != ""
 		var b := FoUI.die_face(v, mark, d.magic, d.carried, _die_size(), clickable and i == selected_die, armed)
 		if not rv.is_empty() and rv.shown[i].rolling:
-			b.text = str(randi_range(1, 6))  # cosmetic only: never touches game.rng
+			b.text = "" if _resting_in_hand() else str(randi_range(1, 6))  # cosmetic only: never touches game.rng
 		if clickable and rv.is_empty():
 			b.pressed.connect(func(): _act(func():
 				if selected_reaction != "":
@@ -1254,7 +1320,7 @@ func _render_dice(clickable: bool) -> void:
 			b.disabled = true
 		if tumbling:
 			var d2: Dictionary = rv.phys.dice[i]
-			b.visible = rv.phys.started
+			b.visible = rv.phys.started or rv.phys.armed
 			b.position = d2.p
 			b.rotation = d2.r
 		dice_nodes.append(b)
@@ -1265,7 +1331,11 @@ func _render_dice(clickable: bool) -> void:
 		var tray := FoUI.panel(FoUI.box(FoUI.OCHRE, FoUI.EDGE, 2, 14))  # the prototype's dice tray
 		tray.custom_minimum_size.y = PHONE_TRAY_H if phone else TRAY_H
 		tray.add_child(row)
-		action_box.add_child(tray)
+		var held := VBoxContainer.new()  # the tray with a name bar on its lid: whose dice these are
+		held.add_theme_constant_override("separation", 0)
+		held.add_child(_tray_label(p, game.challenge_kind))
+		held.add_child(tray)
+		action_box.add_child(held)
 		dice_tray = tray
 	if not rv.is_empty():
 		return
@@ -1275,6 +1345,31 @@ func _render_dice(clickable: bool) -> void:
 			var pnl := FoUI.panel(FoUI.box(FoUI.PANEL_LIGHT, FoUI.EDGE, 2, 10))
 			pnl.add_child(FoUI.label(_breakdown_text(steps), 18))
 			action_box.add_child(pnl)
+
+
+## The bar over the dice tray, in the Challenge's colour: "Melaina rolls" · "Strength 7d6".
+func _tray_label(p, kind: String) -> Control:
+	var bar := FoUI.panel(FoUI.box(_kind_fill(kind), FoUI.EDGE, 2, 0))
+	var m := MarginContainer.new()
+	for side in ["left", "right"]:
+		m.add_theme_constant_override("margin_" + side, 16)
+	for side in ["top", "bottom"]:
+		m.add_theme_constant_override("margin_" + side, 6)
+	bar.add_child(m)
+	var row := HBoxContainer.new()
+	m.add_child(row)
+	var who := FoUI.heading("You roll" if p.name == "You" else "%s rolls" % p.name, 26, FoUI.INK_LIGHT, false)
+	who.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	who.clip_text = true
+	who.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	row.add_child(who)
+	var what := FoUI.label(kind, 22, FoUI.INK_LIGHT, false)
+	what.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(what)
+	var count := FoUI.stat_chip(p.dice.size(), true, FoUI.fs(22) + 8)
+	count.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(count)
+	return bar
 
 
 ## The victory screen, inline on the board: winner, a podium that rises into place
@@ -1298,7 +1393,7 @@ func _render_game_over() -> void:
 	box.add_theme_constant_override("separation", 18 if phone else 26)
 	action_box.add_child(box)
 	var names := PackedStringArray(win.map(func(pi): return game.players[pi].name))
-	var title := FoUI.heading("%s win%s" % [" & ".join(names), "" if names.size() > 1 else "s"], 52 if phone else 104, FoUI.OXBLOOD)
+	var title := FoUI.heading("%s win%s" % [" & ".join(names), "" if names.size() > 1 else "s"], 52 if phone else 104, FoUI.INK)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(title)
 
@@ -1367,8 +1462,8 @@ func _podium_column(pi: int, place: int) -> Array:
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", 0)
 	col.size_flags_vertical = Control.SIZE_SHRINK_END
-	# the winner's card is the moment: oxblood with cream lettering; the rest are plain cards
-	var card := FoUI.panel(FoUI.box(FoUI.OXBLOOD if first else FoUI.PANEL_LIGHT, metal if first else metal.darkened(0.2), 6 if first else 2, 16 if phone else 24))
+	# the winner's card is the moment: ink with cream lettering; the rest are plain cards
+	var card := FoUI.panel(FoUI.box(FoUI.INK if first else FoUI.PANEL_LIGHT, metal if first else metal.darkened(0.2), 6 if first else 2, 16 if phone else 24))
 	var ink := FoUI.INK_LIGHT if first else FoUI.INK
 	col.add_child(card)
 	var v: BoxContainer = HBoxContainer.new() if phone else VBoxContainer.new()
@@ -1505,12 +1600,12 @@ func _additive() -> CanvasItemMaterial:
 	return m
 
 
-## Wedges of oxblood and gold light fanning up from behind the podium, fading toward their
+## Wedges of amber and gold light fanning up from behind the podium, fading toward their
 ## tips; they sway in _trophies.
 func _light_fan(origin: Vector2, w: int) -> void:
 	if back_layer == null or not is_instance_valid(back_layer):
 		return
-	var colors := [FoUI.OXBLOOD, Color("#E0A23A"), FoUI.OXBLOOD, Color("#E0A23A"), FoUI.OXBLOOD]
+	var colors := [Color("#C8742A"), Color("#E0A23A"), Color("#C8742A"), Color("#E0A23A"), Color("#C8742A")]
 	var reach := 1300.0 if not phone else 900.0
 	for i in colors.size():
 		var beam := Polygon2D.new()
@@ -1651,12 +1746,15 @@ func _embers() -> void:
 
 # ------------------------------------------------------------------ overlays
 
-## Announce each Quest as its draft order is set. Challenge results show on the mats instead.
+## Announce each Quest as its draft order is set, and tally a finished one on the mats
+## (the last Quest gets the victory screen instead).
 func _sync_history() -> void:
 	while history_seen < game.history.size():
 		var e: Dictionary = game.history[history_seen]
 		if e.type == "order":
 			_show_banner("Quest %d, begin" % (e.quest + 1))
+		elif e.type == "quest" and not e.final and _animate():
+			score_fx = e  # played once the last roll's reveal is done (_process)
 		history_seen += 1
 
 
@@ -1667,7 +1765,8 @@ func _blocking() -> bool:
 
 ## True while CPU players should wait: an overlay is open or something is animating.
 func _busy() -> bool:
-	return _blocking() or not reveal.is_empty() or fx_left > 0 or flights > 0 or banner_left > 0
+	return _blocking() or not reveal.is_empty() or fx_left > 0 or flights > 0 or banner_left > 0 \
+		or not score_fx.is_empty() or tally_left > 0
 
 
 func _open_zoom(card: Dictionary, challenge: bool) -> void:
@@ -1744,12 +1843,12 @@ func _zoom_panel() -> Control:
 	text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	text.add_theme_constant_override("separation", 12 if phone else 16)
 	row.add_child(text)
-	text.add_child(FoUI.heading(info.get("name", card.name), 34 if phone else 44, FoUI.GOLD))
+	text.add_child(FoUI.heading(info.get("name", card.name), 34 if phone else 44, FoUI.INK))
 	if zoom.challenge:
 		text.add_child(FoUI.label(info.type, 20 if phone else 24, _kind_color(info.kind)))
-		text.add_child(FoUI.label(info.rule, 22 if phone else 26))
+		text.add_child(FoUI.rich(info.rule, 22 if phone else 26))
 	else:
-		text.add_child(FoUI.label(info.get("text", ""), 22 if phone else 26))
+		text.add_child(FoUI.rich(info.get("text", ""), 22 if phone else 26))
 		var where := _card_location(card)
 		if where != "":
 			text.add_child(FoUI.label(where, 20, FoUI.RESERVE))
@@ -1853,7 +1952,7 @@ func _menu_panel() -> Control:
 	var title := FoUI.heading("Paused", 44, FoUI.GOLD)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(title)
-	box.add_child(_big_button("Resume", _close_menu))
+	box.add_child(FoUI.primary(_big_button("Resume", _close_menu)))
 	box.add_child(_big_button("Settings", func(): _open_menu("settings")))
 	box.add_child(_big_button("How to play", func(): _open_menu("rules")))
 	box.add_child(_big_button("Restart", func(): _open_menu("restart")))
@@ -1903,7 +2002,7 @@ func _settings_panel() -> Control:
 		_setting_row(grid, "Haptics", _toggle("Vibrate on rolls and drafts", FoSettings.haptics, func(on):
 			FoSettings.haptics = on
 			_save_settings()))
-	box.add_child(_big_button("Done", _close_menu))
+	box.add_child(FoUI.primary(_big_button("Done", _close_menu)))
 	return pb[0]
 
 
@@ -1938,7 +2037,7 @@ func _choice(options: Array, selected: int, f: Callable) -> HBoxContainer:
 	row.add_theme_constant_override("separation", 8)
 	var group := ButtonGroup.new()
 	for i in options.size():
-		var b := Button.new()
+		var b := FoUI.option(Button.new())
 		b.text = options[i]
 		b.toggle_mode = true
 		b.button_group = group
@@ -1996,7 +2095,7 @@ func _rules_panel() -> Control:
 		text.add_child(body)
 	scroll.add_child(text)
 	box.add_child(scroll)
-	box.add_child(_big_button("Done", _close_menu))
+	box.add_child(FoUI.primary(_big_button("Done", _close_menu)))
 	return pb[0]
 
 
@@ -2004,7 +2103,7 @@ func _rules_panel() -> Control:
 
 const BOB_HEIGHT := 6.0     # Challenge monsters float up and down this far (Sharpness a little less)
 const BOB_PERIOD := 2.6     # seconds per bob
-const BANNER_TIME := 1.4    # "Quest N, begin" from fade-in to gone
+const BANNER_TIME := 2.6    # "Quest N, begin" from fade-in to gone
 
 
 ## Challenge art that floats gently up and down (see `_bob`). Both Challenges bob in step,
@@ -2030,54 +2129,93 @@ func _bob() -> void:
 		b.position.y = 0.0 if still else -b.get_meta("bob_amp", BOB_HEIGHT) * (0.5 + 0.5 * sin(t))
 
 
-## A short inline title across the board (no dimming, no clicks): scales up, holds, fades.
+## "Quest N, begin", Dark Souls style (no clicks): the table sinks into black, the title rises
+## in spaced pale-gold capitals on a smoky band over a gold rule, swells slowly, and the dark lifts.
 func _show_banner(text: String) -> void:
 	if fx_layer == null or not _animate():
 		return
-	var band := PanelContainer.new()
+	var holder := Control.new()
+	holder.set_anchors_preset(Control.PRESET_FULL_RECT)
+	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	fx_layer.add_child(holder)
+	var veil := ColorRect.new()
+	veil.set_anchors_preset(Control.PRESET_FULL_RECT)
+	veil.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	veil.color = Color(0, 0, 0, 0.9)
+	holder.add_child(veil)
+	# a band of deeper black, soft at top and bottom
+	var smoke := Gradient.new()
+	smoke.offsets = PackedFloat32Array([0.0, 0.3, 0.7, 1.0])
+	smoke.colors = PackedColorArray([Color(0, 0, 0, 0), Color(0, 0, 0, 0.85), Color(0, 0, 0, 0.85), Color(0, 0, 0, 0)])
+	var smoke_tex := GradientTexture2D.new()
+	smoke_tex.gradient = smoke
+	smoke_tex.fill_from = Vector2(0, 0)
+	smoke_tex.fill_to = Vector2(0, 1)
+	smoke_tex.width = 4
+	smoke_tex.height = 64
+	var band := TextureRect.new()
+	band.texture = smoke_tex
+	band.stretch_mode = TextureRect.STRETCH_SCALE
 	band.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	band.add_theme_stylebox_override("panel", FoUI.box(FoUI.OXBLOOD, FoUI.INK, 0, 18))
-	var st: StyleBoxFlat = band.get_theme_stylebox("panel")
-	st.border_width_top = 4
-	st.border_width_bottom = 4
-	band.anchor_left = 0
 	band.anchor_right = 1
 	band.anchor_top = 0.5
 	band.anchor_bottom = 0.5
-	# the Quest's two Challenges flank the title, named underneath it
-	var row := HBoxContainer.new()
-	row.alignment = BoxContainer.ALIGNMENT_CENTER
-	row.add_theme_constant_override("separation", 20 if phone else 40)
-	band.add_child(row)
+	holder.add_child(band)
+	var gold := Color("#D9C38A")
 	var words := VBoxContainer.new()
 	words.alignment = BoxContainer.ALIGNMENT_CENTER
-	var l := FoUI.heading(text, 48 if phone else 72, FoUI.INK_LIGHT, false)
+	words.add_theme_constant_override("separation", 10 if phone else 14)
+	words.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	words.anchor_right = 1
+	words.anchor_top = 0.5
+	words.anchor_bottom = 0.5
+	var spaced := FontVariation.new()
+	spaced.base_font = FoAssets.font(FoUI.HEADING_FONT)
+	spaced.spacing_glyph = 4 if phone else 8
+	var l := FoUI.heading(text.to_upper(), 44 if phone else 76, gold, false)
+	l.add_theme_font_override("font", spaced)
+	l.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
+	l.add_theme_constant_override("shadow_offset_y", 3)
+	l.add_theme_constant_override("shadow_outline_size", 12)
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	words.add_child(l)
-	var foes := FoUI.label("%s  ·  %s" % [game.strength_card.name, game.sharpness_card.name], 18 if phone else 26, Color(FoUI.INK_LIGHT, 0.8), false)
+	# a thin gold rule that burns out towards both ends
+	var line := Gradient.new()
+	line.offsets = PackedFloat32Array([0.0, 0.5, 1.0])
+	line.colors = PackedColorArray([Color(gold, 0), Color(gold, 0.85), Color(gold, 0)])
+	var line_tex := GradientTexture2D.new()
+	line_tex.gradient = line
+	line_tex.width = 64
+	line_tex.height = 1
+	var rule := TextureRect.new()
+	rule.texture = line_tex
+	rule.stretch_mode = TextureRect.STRETCH_SCALE
+	rule.custom_minimum_size = Vector2(minf(_view_w() * 0.6, 900), 2)
+	rule.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	words.add_child(rule)
+	# the Quest's two Challenges, named underneath
+	var foes := FoUI.label("%s  ·  %s" % [game.strength_card.name, game.sharpness_card.name], 18 if phone else 24, Color(gold, 0.6), false)
 	foes.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	words.add_child(foes)
-	for kind in [FoGame.STRENGTH, "", FoGame.SHARPNESS]:
-		if kind == "":
-			row.add_child(words)
-			continue
-		var tex := FoAssets.challenge_art(game.challenge_card(kind))
-		if tex != null and not phone:
-			row.add_child(FoUI.picture(tex, 120, true))
-	fx_layer.add_child(band)
-	var h := band.get_combined_minimum_size().y
-	band.offset_top = -h / 2
-	band.offset_bottom = h / 2
-	band.pivot_offset = Vector2(_view_w() / 2, h / 2)
-	band.modulate.a = 0.0
-	band.scale = Vector2(0.92, 0.92)
+	holder.add_child(words)
+	var h := words.get_combined_minimum_size().y
+	words.offset_top = -h / 2
+	words.offset_bottom = h / 2
+	band.offset_top = -h * 1.1
+	band.offset_bottom = h * 1.1
+	words.pivot_offset = Vector2(_view_w() / 2, h / 2)
+	holder.modulate.a = 0.0
+	words.modulate.a = 0.0
+	words.scale = Vector2(0.97, 0.97)
 	banner_left = BANNER_TIME
-	var tw := band.create_tween()
-	tw.tween_property(band, "modulate:a", 1.0, 0.2)
-	tw.parallel().tween_property(band, "scale", Vector2.ONE, 0.3).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-	tw.tween_interval(BANNER_TIME - 0.5)
-	tw.tween_property(band, "modulate:a", 0.0, 0.3)
-	tw.tween_callback(band.queue_free)
+	var tw := holder.create_tween()
+	tw.tween_property(holder, "modulate:a", 1.0, 0.45).set_ease(Tween.EASE_OUT)
+	tw.tween_property(words, "modulate:a", 1.0, 0.5).set_trans(Tween.TRANS_SINE)
+	tw.tween_interval(BANNER_TIME - 1.6)
+	tw.tween_property(holder, "modulate:a", 0.0, 0.65).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+	tw.tween_callback(holder.queue_free)
+	# the title keeps swelling, slow and steady, until it is gone
+	words.create_tween().tween_property(words, "scale", Vector2(1.04, 1.04), BANNER_TIME)
 
 
 ## Text / outline colour for a Challenge kind.
@@ -2106,6 +2244,9 @@ func _start_reveal(was: Dictionary) -> void:
 	var p := game.player()
 	var kind := game.challenge_kind
 	var n := p.dice.size()
+	if n == 0:  # no dice, no tray: nothing to throw (the tumble would wait forever for a tray)
+		reveal = {}
+		return
 	var marks := game.die_marks(game.current, kind)
 	var vals := game.values(game.current, kind)
 	var full: bool = was.is_empty() or was.get("vals", []).size() != n
@@ -2177,8 +2318,10 @@ func _start_reveal(was: Dictionary) -> void:
 		var dice := []
 		for i in n:
 			dice.append({"p": Vector2.ZERO, "v": Vector2.ZERO, "r": 0.0, "w": 0.0, "landed": false})
+		# A person's roll waits in the hand for them to press Roll (`_roll_down` / `_roll_up`).
 		reveal.phys = {"dice": dice, "t": 0.0, "started": false, "settle": -1.0, "snap": -1.0,
-			"landed": 0, "clack": 0.0, "snapped": false}
+			"landed": 0, "clack": 0.0, "snapped": false, "armed": not p.is_bot, "hold": -1.0,
+			"power": 1.0, "rattle": 0.0, "hit": false}
 
 
 func _dice_ctx() -> String:
@@ -2203,7 +2346,7 @@ func _advance_reveal(delta: float) -> void:
 		reveal.tick = TUMBLE_TICK
 		for i in reveal.shown.size():
 			var b := _die_node(i)
-			if b != null and reveal.shown[i].rolling:
+			if b != null and reveal.shown[i].rolling and not _resting_in_hand():
 				b.text = str(randi_range(1, 6))  # cosmetic only: never touches game.rng
 				if not tumbling:
 					b.rotation = randf_range(-0.3, 0.3)
@@ -2230,13 +2373,18 @@ func _tumble(delta: float) -> void:
 	var area := dice_felt.size - Vector2(s, s)
 	var dice: Array = ph.dice
 	var n := dice.size()
+	if not ph.started and ph.armed:
+		_hold_dice(delta, area, s)
+		return
 	if not ph.started:
 		ph.started = true
+		var power: float = ph.power
 		for d in dice:
-			d.p = Vector2(randf_range(0.0, area.x * 0.12), randf_range(0.0, area.y))
-			d.v = Vector2(randf_range(1100.0, 1700.0), randf_range(-600.0, 600.0))
+			if not ph.has("home"):  # (a person's dice leave from where they were shaken)
+				d.p = Vector2(randf_range(0.0, area.x * 0.12), randf_range(0.0, area.y))
+			d.v = Vector2(randf_range(1100.0, 1700.0) * power, randf_range(-600.0, 600.0))
 			d.r = randf_range(-PI, PI)
-			d.w = randf_range(-16.0, 16.0)
+			d.w = randf_range(-16.0, 16.0) * power
 	ph.t += delta
 	ph.clack -= delta
 	if ph.snap < 0:
@@ -2262,6 +2410,10 @@ func _tumble(delta: float) -> void:
 					d.v.y *= -0.6
 					d.w -= d.v.x * 0.01
 				_clack(hit)
+				if hit > 900.0 and not ph.get("hit", true):
+					ph.hit = true  # the first hard knock on the wall jolts the tray
+					_shake(dice_tray, 0.5 * ph.power)
+					_haptic(25)
 			for i in n:  # dice knock each other about (as circles a little wider than the die)
 				for j in range(i + 1, n):
 					var a: Dictionary = dice[i]
@@ -2317,12 +2469,111 @@ func _tumble(delta: float) -> void:
 			b.rotation = dice[i].r
 
 
+## Before a person's throw: the dice sit in a loose pile at the left of the tray, faces blank.
+## While Roll is held they shake in the hand, harder and faster the longer it's held.
+func _hold_dice(delta: float, area: Vector2, s: float) -> void:
+	var ph: Dictionary = reveal.phys
+	var dice: Array = ph.dice
+	if not ph.has("home"):
+		ph.home = []
+		var cols := maxi(1, int(area.y / (s * 0.8)))  # a column or two, hugging the left wall
+		for i in dice.size():
+			var c := floori(float(i) / cols)
+			var r := i % cols
+			var spot := Vector2(area.x * 0.03 + c * s * 0.9, (r + 0.5) * area.y / cols - s * 0.3)
+			spot += Vector2(randf_range(-8, 8), randf_range(-8, 8))
+			ph.home.append(spot.clamp(Vector2.ZERO, area))
+			dice[i].r = randf_range(-0.35, 0.35)
+	var shake := 0.0
+	if ph.hold >= 0:
+		ph.hold += delta
+		shake = clampf(ph.hold / HOLD_FULL, 0.0, 1.0)
+		ph.rattle -= delta
+		if ph.rattle <= 0:
+			ph.rattle = RATTLE_GAP * (1.6 - 0.6 * shake)  # never quicker than RATTLE_GAP
+			_play("die_land", randf_range(1.6, 2.0) - 0.3 * shake)
+			if shake >= 1.0:
+				_haptic(8)
+	for i in dice.size():
+		var d: Dictionary = dice[i]
+		var jitter := (4.0 + 10.0 * shake) if ph.hold >= 0 else 0.0
+		d.p = ph.home[i] + Vector2(randf_range(-jitter, jitter), randf_range(-jitter, jitter))
+		var b := _die_node(i)
+		if b != null:
+			b.visible = true
+			b.position = d.p
+			b.rotation = d.r + (randf_range(-0.25, 0.25) * shake if ph.hold >= 0 else 0.0)
+	if dice_tray != null and is_instance_valid(dice_tray) and ph.hold >= 0:
+		dice_tray.pivot_offset = dice_tray.size / 2
+		dice_tray.rotation = randf_range(-0.002, 0.002) * shake
+
+
+## A person's full roll is waiting for them to throw it.
+func _waiting_to_throw() -> bool:
+	var rv := _live_reveal()
+	return rv.has("phys") and rv.phys.armed and not rv.phys.started
+
+
+## Waiting to throw and not shaking: the dice show no faces.
+func _resting_in_hand() -> bool:
+	return _waiting_to_throw() and reveal.phys.hold < 0
+
+
+## Roll pressed: pick the dice up and start shaking.
+func _roll_down() -> void:
+	if not _waiting_to_throw() or reveal.phys.hold >= 0:
+		return
+	reveal.phys.hold = 0.0
+	reveal.phys.rattle = 0.0
+	_haptic(10)
+
+
+## Roll released: throw, harder the longer it was shaken (a tap still throws).
+func _roll_up() -> void:
+	if not _waiting_to_throw() or reveal.phys.hold < 0:
+		return
+	var ph: Dictionary = reveal.phys
+	var shake := clampf(ph.hold / HOLD_FULL, 0.0, 1.0)
+	ph.power = lerpf(0.8, 1.3, shake)
+	ph.armed = false  # _tumble throws from the hand on its next frame
+	if dice_tray != null and is_instance_valid(dice_tray):
+		dice_tray.rotation = 0.0
+	_play("roll", lerpf(1.08, 0.92, shake), lerpf(0.45, 1.0, clampf(reveal.shown.size() / 8.0, 0.0, 1.0)))
+	_haptic(int(lerpf(30, 60, shake)))
+	_refresh()  # the Roll button goes
+
+
+## Roll / Space / Enter: press to shake, release to throw.
+func _roll_button(n: int) -> Button:
+	var b := FoUI.primary(Button.new())
+	b.custom_minimum_size = Vector2(220, TOUCH * 1.4)
+	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# "Roll" and the gold die together in the middle (a Button icon would sit out at the edge)
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 14)
+	row.set_anchors_preset(Control.PRESET_FULL_RECT)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var word := FoUI.label("Roll", 30, FoUI.CREAM, false)
+	word.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(word)
+	var count := FoUI.stat_chip(n, true, FoUI.fs(30) + 6)
+	count.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(count)
+	b.add_child(row)
+	b.action_mode = BaseButton.ACTION_MODE_BUTTON_PRESS
+	b.button_down.connect(_roll_down)
+	b.button_up.connect(_roll_up)
+	return b
+
+
 ## A die hitting a wall or another die: a click, louder the harder (throttled).
 func _clack(speed: float) -> void:
-	if speed < 260.0 or reveal.phys.clack > 0:
+	if speed < 420.0 or reveal.phys.clack > 0:
 		return
-	reveal.phys.clack = 0.06
-	_play("die_land", randf_range(1.5, 1.9) - minf(speed, 1500.0) / 3000.0)
+	reveal.phys.clack = 0.14
+	_play_spaced("die_land", DIE_CLICK_GAP, randf_range(1.5, 1.9) - minf(speed, 1500.0) / 3000.0,
+		clampf(speed / 1500.0, 0.35, 1.0))
 
 
 ## Top-left of each die in the settled row: the same spots the centred HFlow puts them in.
@@ -2348,7 +2599,7 @@ func _land_free(i: int, pitch: float) -> void:
 	b.text = str(reveal.shown[i].value)
 	b.scale = Vector2(1.25, 0.78)
 	b.create_tween().tween_property(b, "scale", Vector2.ONE, 0.4).set_trans(Tween.TRANS_ELASTIC).set_ease(Tween.EASE_OUT)
-	_play("die_land", pitch)
+	_play_spaced("die_land", DIE_CLICK_GAP, pitch)
 
 
 func _die_node(i: int) -> Button:
@@ -2373,7 +2624,7 @@ func _land(i: int, value: int, pitch: float) -> void:
 	var tw := b.create_tween().set_parallel()
 	tw.tween_property(b, "scale", Vector2.ONE, 0.4).set_trans(Tween.TRANS_ELASTIC).set_ease(Tween.EASE_OUT)
 	tw.tween_property(b, "rotation", 0.0, 0.2).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-	_play("die_land", pitch)
+	_play_spaced("die_land", DIE_CLICK_GAP, pitch)
 
 
 ## One breakdown step changes a settled die: it pops up for a gain, sinks for a loss.
@@ -2388,10 +2639,10 @@ func _step(i: int, value: int, delta: int, pitch: float) -> void:
 	if delta >= 0:
 		b.scale = Vector2(1.22, 1.22)
 		b.create_tween().tween_property(b, "scale", Vector2.ONE, 0.22).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-		_play("die_step", pitch)
+		_play_spaced("die_step", DIE_STEP_GAP, pitch)
 	else:
 		_crunch(b, 0.6)
-		_play("die_step", maxf(0.5, 1.6 - pitch))
+		_play_spaced("die_step", DIE_STEP_GAP, maxf(0.5, 1.6 - pitch))
 
 
 ## A die gains its ✓ / × mark: ✓ pops with a chime, × crunches and shakes the tray.
@@ -2436,6 +2687,102 @@ func _crunch(b: Control, amount: float) -> void:
 	tw.tween_property(b, "modulate", Color.WHITE, 0.45)
 
 
+const TALLY_STEP := 0.45   # between mats in the Quest tally
+const TALLY_COINS := 8      # most coin clinks for one mat's Successes
+
+
+## A Quest is scored: each mat in turn, lowest score first, throws up its Successes (+N, a
+## coin per Success, pitch rising) and its total pops; then the Quest's top scorers ring
+## the anvil with a spark burst. CPU turns wait (tally_left).
+func _tally_quest(e: Dictionary) -> void:
+	if not _animate():
+		return
+	var rows: Array = e.rows.duplicate()
+	rows.sort_custom(func(a, b): return a.score < b.score if a.score != b.score else a.player > b.player)
+	var best: int = rows[-1].score
+	var tw := create_tween()
+	for k in rows.size():
+		tw.tween_callback(_tally_seat.bind(rows[k], k))
+		tw.tween_interval(TALLY_STEP)
+	if best > 0:
+		tw.tween_interval(0.1)
+		tw.tween_callback(func():
+			_play("quest_scored", 1.15)  # brighter than the game-over anvil
+			_haptic(80)
+			for r in rows:
+				if r.score == best:
+					_crown_mat(r.player))
+	tally_left = TALLY_STEP * rows.size() + (1.2 if best > 0 else 0.3)
+
+
+func _tally_seat(r: Dictionary, k: int) -> void:
+	var anchor: Control = total_nodes.get(r.player)
+	var shown := is_instance_valid(anchor) and anchor.is_visible_in_tree()
+	var score: int = r.score
+	if shown:
+		var color := FoUI.GOOD if score > 0 else (FoUI.RED if score < 0 else FoUI.MUTED)
+		_float_text(anchor, "%+d" % score if score != 0 else "0", color, 56 if score > 0 else 40)
+		anchor.pivot_offset = anchor.size / 2
+		anchor.scale = Vector2(1.5, 1.5)
+		anchor.create_tween().tween_property(anchor, "scale", Vector2.ONE, 0.35) \
+			.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	if score <= 0:
+		_play("die_bad", 0.6)
+		return
+	for i in mini(score, TALLY_COINS):
+		get_tree().create_timer(0.07 * i).timeout.connect(_play.bind("tally", 0.9 + 0.08 * i + 0.04 * k))
+	_haptic(20)
+
+
+## The Quest's winner: their mat jumps and sparks fly off its top edge.
+func _crown_mat(pi: int) -> void:
+	var mat: Control = mat_nodes.get(pi)
+	if not is_instance_valid(mat) or not mat.is_visible_in_tree():
+		return
+	var r := mat.get_global_rect()
+	_spark_burst(_fx_point(Vector2(r.get_center().x, r.position.y + 20)), r.size.x * 0.4)
+	mat.pivot_offset = mat.size / 2
+	mat.scale = Vector2(1.06, 1.06)
+	mat.create_tween().tween_property(mat, "scale", Vector2.ONE, 0.5) \
+		.set_trans(Tween.TRANS_ELASTIC).set_ease(Tween.EASE_OUT)
+	var head: Control = total_nodes.get(pi)
+	if is_instance_valid(head):
+		head.modulate = Color(1.8, 1.6, 0.8)
+		head.create_tween().tween_property(head, "modulate", Color.WHITE, 0.8)
+	_shake(mat, 0.8)
+
+
+## A burst of gold sparks thrown up and out from `origin` along a line `width` wide.
+func _spark_burst(origin: Vector2, width: float) -> void:
+	if fx_layer == null or not is_instance_valid(fx_layer):
+		return
+	var e := CPUParticles2D.new()
+	e.position = origin
+	e.emission_shape = CPUParticles2D.EMISSION_SHAPE_RECTANGLE
+	e.emission_rect_extents = Vector2(width / 2, 4)
+	e.amount = 90
+	e.lifetime = 1.4
+	e.one_shot = true
+	e.explosiveness = 0.95
+	e.direction = Vector2(0, -1)
+	e.spread = 70.0
+	e.gravity = Vector2(0, 900)
+	e.initial_velocity_min = 250.0
+	e.initial_velocity_max = 650.0
+	e.angular_velocity_min = -360.0
+	e.angular_velocity_max = 360.0
+	e.scale_amount_min = 4.0
+	e.scale_amount_max = 9.0
+	var ramp := Gradient.new()
+	ramp.set_color(0, Color("#FFE08A"))
+	ramp.add_point(0.5, Color("#F2B13A"))
+	ramp.set_color(ramp.get_point_count() - 1, Color(0.9, 0.4, 0.1, 0.0))
+	e.color_ramp = ramp
+	fx_layer.add_child(e)
+	e.emitting = true
+	e.finished.connect(e.queue_free)
+
+
 ## A quick rattle. Rotation and scale only: a Container owns its children's positions.
 func _shake(n: Control, amount: float) -> void:
 	if n == null or not is_instance_valid(n) or not n.is_inside_tree():
@@ -2447,54 +2794,56 @@ func _shake(n: Control, amount: float) -> void:
 
 
 ## "+1" / "-1" rising off a die and fading, drawn above the board.
-func _float_text(anchor: Control, text: String, color: Color) -> void:
+func _float_text(anchor: Control, text: String, color: Color, size := 32) -> void:
 	if fx_layer == null or not is_instance_valid(fx_layer):
 		return
 	var l := Label.new()
 	l.text = text
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	l.add_theme_font_override("font", FoAssets.font(FoUI.BOLD_FONT))
-	l.add_theme_font_size_override("font_size", FoUI.fs(32))
+	l.add_theme_font_size_override("font_size", FoUI.fs(size))
 	l.add_theme_color_override("font_color", color)
 	l.add_theme_color_override("font_outline_color", FoUI.IVORY)
-	l.add_theme_constant_override("outline_size", 8)
+	l.add_theme_constant_override("outline_size", 8 * size / 32)
 	fx_layer.add_child(l)
 	l.reset_size()
 	var r := anchor.get_global_rect()
 	l.global_position = Vector2(r.get_center().x - l.size.x / 2, r.position.y - l.size.y * 0.5)
+	var k := size / 32.0  # bigger text rises further and lingers
 	var tw := l.create_tween().set_parallel()
-	tw.tween_property(l, "position:y", l.position.y - 50, 0.7).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-	tw.tween_property(l, "modulate:a", 0.0, 0.3).set_delay(0.4)
+	tw.tween_property(l, "position:y", l.position.y - 50 * k, 0.7 * k).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tw.tween_property(l, "modulate:a", 0.0, 0.3).set_delay(0.4 * k)
 	tw.chain().tween_callback(l.queue_free)
 
 
 ## The result line arrives: Successes count up (coins rising in pitch) and pop; a Strength
 ## penalty slams down from above with a thud and a shake; no Successes sinks.
-func _result_fx(head: Label, fx: Dictionary) -> void:
+func _result_fx(head: Control, fx: Dictionary) -> void:
 	if not _animate():
 		return
-	var text := head.text
 	var tw := head.create_tween()
 	tw.tween_callback(func(): head.pivot_offset = head.size / 2)  # once it has been laid out
 	var dur := 0.3
-	if game.challenge_kind == FoGame.SHARPNESS:
+	if game.challenge_kind == FoGame.SHARPNESS and head is Label:
+		var lab := head as Label
+		var text := lab.text
 		var to: int = game.evaluate(game.current, FoGame.SHARPNESS).successes
 		var from: int = fx.from
 		if to != from:
 			var dir := 1 if to > from else -1
-			head.text = FoGame.successes_text(from)
+			lab.text = FoGame.successes_text(from)
 			var k := 0
 			for v in range(from + dir, to + dir, dir):
 				var pitch := 1.0 + 0.1 * k if dir > 0 else maxf(0.5, 0.9 - 0.1 * k)
 				tw.tween_interval(0.11)
 				tw.tween_callback(func():
-					head.text = FoGame.successes_text(v)
-					head.scale = Vector2(1.15, 1.15)
+					lab.text = FoGame.successes_text(v)
+					lab.scale = Vector2(1.15, 1.15)
 					_play("tally", pitch))
 				tw.tween_property(head, "scale", Vector2.ONE, 0.08)
 				k += 1
 			dur += 0.2 * absi(to - from)
-			tw.tween_callback(func(): head.text = text)
+			tw.tween_callback(func(): lab.text = text)
 	match fx.style:
 		"pop":
 			tw.tween_callback(func():
@@ -2721,6 +3070,23 @@ func _hide_peek() -> void:
 
 ## Emulated mouse events from a touch carry DEVICE_ID_EMULATION, so a real mouse turns hover back on.
 func _input(ev: InputEvent) -> void:
+	# The web canvas swallows browser shortcuts, so pass Cmd+R / Ctrl+R (reload) back to the page.
+	if OS.has_feature("web") and ev is InputEventKey and ev.pressed and not ev.echo \
+			and ev.keycode == KEY_R and (ev.meta_pressed or ev.ctrl_pressed):
+		get_viewport().set_input_as_handled()
+		JavaScriptBridge.eval("window.location.reload()")
+		return
+	if not reveal.is_empty() and reveal.has("phys") and reveal.phys.armed:
+		var release: bool = (ev is InputEventMouseButton or ev is InputEventScreenTouch) and not ev.pressed
+		if release and reveal.phys.hold >= 0:
+			_roll_up()  # released anywhere, even off the button
+		elif ev is InputEventKey and not ev.echo and ev.keycode in [KEY_SPACE, KEY_ENTER, KEY_KP_ENTER] \
+				and not _blocking():
+			if ev.pressed:
+				_roll_down()
+			else:
+				_roll_up()
+			get_viewport().set_input_as_handled()
 	if ev is InputEventScreenTouch or ev is InputEventScreenDrag:
 		touching = true
 	elif ev is InputEventMouse and ev.device != InputEvent.DEVICE_ID_EMULATION:
@@ -2801,8 +3167,18 @@ func _haptic(ms: int) -> void:
 		Input.vibrate_handheld(ms, 0.5)
 
 
-func _play(event: String, pitch := 1.0) -> void:
-	_play_file(FoAssets.sfx_path(event), FoAssets.SFX[event][1], pitch)
+func _play(event: String, pitch := 1.0, loud := 1.0) -> void:
+	_play_file(FoAssets.sfx_path(event), FoAssets.SFX[event][1] * loud, pitch)
+
+
+## `_play`, dropped if the same event played under `gap` seconds ago: dice clicks and step pops
+## come in bursts, and a burst of one sample reads as noise.
+func _play_spaced(event: String, gap: float, pitch := 1.0, loud := 1.0) -> void:
+	var now := Time.get_ticks_msec() / 1000.0
+	if now - sfx_last.get(event, -INF) < gap:
+		return
+	sfx_last[event] = now
+	_play(event, pitch, loud)
 
 
 func _play_file(path: String, volume := 0.5, pitch := 1.0) -> void:
@@ -2853,7 +3229,7 @@ func _play_events() -> void:
 			_haptic(80)
 		return
 	if now.quest != was.quest:
-		_play("quest_end")
+		_play("quest_start")  # the bell, as at the start of the game
 	_play_moves(was.moves)
 	var p := game.player()
 	if now.current != was.current and not p.is_bot and now.phase != FoGame.Phase.REACT:
@@ -2875,6 +3251,8 @@ func _play_events() -> void:
 			roll_pending = true  # played in _process once any overlay is dismissed, with the reveal
 			if _animate():
 				_start_reveal({})
+				if _waiting_to_throw():
+					roll_pending = false  # the throw has its own sound
 		elif was.dice != now.dice:
 			if not (game.moves.size() > was.moves and game.moves[-1][0] == "react"):
 				_play("reaction")

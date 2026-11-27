@@ -54,6 +54,66 @@ func test_render_every_phase() -> void:
 		ok(seen.has(ph), "phase %d never rendered" % ph)
 
 
+## A seat with no dice (e.g. a penalty ate them all) has no tray to throw into: the reveal
+## must not start, or it waits for the tray forever and CPU turns never resume.
+func test_no_dice_no_reveal() -> void:
+	var ui: Control = load("res://scripts/main.gd").new()
+	ui.data = CardData.load_default()
+	ui._show_setup()
+	ui._set_counts(1, 2)
+	seed(1)
+	ui._start_game()
+	var g: FoGame = ui.game
+	var steps := 0
+	while g.phase != FoGame.Phase.REACT and steps < 500:
+		FoBot.step(g)
+		steps += 1
+	eq(g.phase, FoGame.Phase.REACT, "reached a Challenge")
+	g.player().dice.clear()
+	ui._refresh()
+	ui._start_reveal({})
+	ok(ui.reveal.is_empty(), "no reveal without dice")
+	ok(not ui._busy(), "nothing holds up the turn")
+	ok(_has_text(ui.action_box, "No dice"), "says so")
+	ok(g.finish_reactions(), "the turn can end")
+	ui.free()
+
+
+## A person's roll waits in the hand for Roll (press to shake, release to throw) under a
+## tray labelled with their name; a CPU's dice are thrown straight away.
+func test_roll_button() -> void:
+	var ui: Control = load("res://scripts/main.gd").new()
+	ui.data = CardData.load_default()
+	ui._show_setup()
+	ui._set_counts(1, 2)
+	seed(1)
+	ui._start_game()
+	var g: FoGame = ui.game
+	var seen := {}
+	var steps := 0
+	while seen.size() < 2 and steps < 2000:
+		if g.phase == FoGame.Phase.REACT and not g.player().dice.is_empty() and not seen.has(g.player().is_bot):
+			ui._refresh()
+			ui._start_reveal({})
+			ui._refresh()
+			var human: bool = not g.player().is_bot
+			seen[g.player().is_bot] = true
+			eq(ui._waiting_to_throw(), human, "only a person waits to throw")
+			ok(_has_text(ui.action_box, ("You roll" if human else "%s rolls" % g.player().name)), "the tray says whose roll it is")
+			if human:
+				ok(_has_text(ui.action_box, "Roll"), "Roll button")
+				ui._roll_down()
+				ok(ui._waiting_to_throw() and ui.reveal.phys.hold >= 0, "held: shaking, not thrown")
+				ui._roll_up()
+				ok(not ui._waiting_to_throw(), "released: thrown")
+				ok(not _has_text(ui.action_box, "Roll"), "Roll button gone")
+			ui.reveal = {}
+		FoBot.step(g)
+		steps += 1
+	eq(seen.size(), 2, "saw a person's roll and a CPU's")
+	ui.free()
+
+
 ## The main menu builds (with and without a save) and New game leads to the seat setup.
 func test_title_screen() -> void:
 	var ui: Control = load("res://scripts/main.gd").new()
@@ -176,7 +236,30 @@ func _fits(_ui: Control, c: Control, limit: float, what: String) -> void:
 	ok(w <= limit, "%s is %d px wide on a phone (max %d)" % [what, w, limit])
 
 
+func _has_button(n: Node, text: String) -> bool:
+	if n is Button and n.text == text and not n.is_queued_for_deletion():
+		return true
+	return n.get_children().any(func(c): return _has_button(c, text))
+
+
 func _has_text(n: Node, prefix: String) -> bool:
 	if n is Label and n.text.begins_with(prefix):
 		return true
 	return n.get_children().any(func(c): return _has_text(c, prefix))
+
+
+func test_stat_marks() -> void:
+	var runs := FoUI.stat_runs("+1D6 against Demons, get -2d6 and + 1 AP")
+	ok(runs.size() == 5, "runs %s" % str(runs))
+	ok(runs[0] is Dictionary and runs[0].count == 1 and runs[0].dice, "+1D6 -> gold 1")
+	ok(runs[1] == " against Demons, get ", "plain text kept")
+	ok(runs[2].count == -2 and runs[2].dice, "-2d6 -> gold -2")
+	ok(runs[4].count == 1 and not runs[4].dice, "+ 1 AP -> silver +1")
+	ok(FoUI.stat_runs("Hammer 6 blows") == ["Hammer 6 blows"], "no false matches")
+	ok(FoUI.stat_mark(3, true).n == "3" and FoUI.stat_mark(2, false).n == "+2", "token text")
+	# every card / Challenge text that names dice gets a token, never a literal "d6"
+	var data := CardData.load_default()
+	for c in data.ingredients + data.challenges:
+		for run in FoUI.stat_runs(c.get("text", c.get("rule", ""))):
+			if run is String:
+				ok(run.to_lower().find("d6") == -1, "%s still says d6: %s" % [c.name, run])

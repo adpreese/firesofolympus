@@ -465,6 +465,8 @@ func die_marks(pi: int, kind: String) -> Array[int]:
 			marks[idx[j]] = sub[j]
 	else:
 		marks = Scoring.die_marks(challenge_card(kind).name, vals)
+	if kind == STRENGTH and challenge_card(kind).name == "Kraken" and flag_sum(pi, "auto_penalty") > 0:
+		marks.fill(-1)  # Kraken Blood: the penalty comes whatever the total
 	if kind == SHARPNESS and flag_sum(pi, "mithril") > 0:
 		for i in vals.size():
 			if vals[i] >= 6:

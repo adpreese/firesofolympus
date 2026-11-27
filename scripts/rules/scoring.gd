@@ -83,11 +83,23 @@ static func strength_penalty(card_name: String, vals: Array, extra := 0) -> Dict
 
 ## Which dice matter for this Challenge, for highlighting: one int per die.
 ## Sharpness: 1 = the die scores. Strength: -1 = the die triggers the penalty,
-## 1 = the die protects you (Giant Crab's set of 3). Sum-based cards (Ice Dragon, Kraken) mark nothing.
+## 1 = the die protects you (Giant Crab's set of 3). Ice Dragon marks the die that takes the running
+## total (left to right) to each multiple of 10, one per Success. Kraken marks every die: 1 when the
+## total beats 20, -1 when it doesn't.
 static func die_marks(card_name: String, vals: Array) -> Array[int]:
 	var marks: Array[int] = []
 	marks.resize(vals.size())
 	match card_name:
+		"Ice Dragon":
+			var last := 10 * sharpness_successes(card_name, vals)  # a total that dips back under doesn't count
+			var goal := 10
+			var total := 0
+			for i in vals.size():
+				total += vals[i]
+				if goal <= last and total >= goal:
+					marks[i] = 1
+					while total >= goal:  # one die can pass two thresholds (e.g. a 12)
+						goal += 10
 		"Razor Mantis":
 			_mark(marks, vals, func(v): return v >= 6, 1)
 		"Animated Flytrap":
@@ -112,6 +124,8 @@ static func die_marks(card_name: String, vals: Array) -> Array[int]:
 				if counts.has(7 - v) and v != 7 - v:
 					left[v] = mini(counts[v], counts[7 - v])
 			_mark_up_to(marks, vals, left, 1)
+		"Kraken":
+			marks.fill(1 if _sum(vals) > 20 else -1)
 		"Golem", "Phantasm", "Cockatrice", "Razorback Turtle":
 			_mark(marks, vals, func(v): return v == 1, -1)
 		"Mimic":

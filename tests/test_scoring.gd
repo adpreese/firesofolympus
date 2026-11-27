@@ -34,11 +34,15 @@ func test_die_marks() -> void:
 	eq(Scoring.die_marks("Razor Mantis", [6, 7, 5]), [1, 1, 0] as Array[int], "6 or more")
 	eq(Scoring.die_marks("Mimic", [1, 2, 3]), [-1, 0, -1] as Array[int], "odd triggers")
 	eq(Scoring.die_marks("Giant Crab", [4, 4, 4, 4, 2]), [1, 1, 1, 0, 0] as Array[int], "set of 3 protects")
-	eq(Scoring.die_marks("Ice Dragon", [6, 6]), [0, 0] as Array[int], "sum-based")
+	eq(Scoring.die_marks("Ice Dragon", [6, 6, 6, 6, 5]), [0, 1, 0, 1, 0] as Array[int], "each 10 of the total")
+	eq(Scoring.die_marks("Ice Dragon", [6, 3]), [0, 0] as Array[int], "under 10")
+	eq(Scoring.die_marks("Ice Dragon", [6, 6, -5]), [0, 0, 0] as Array[int], "dropped back under 10")
+	eq(Scoring.die_marks("Kraken", [6, 6, 6, 3]), [1, 1, 1, 1] as Array[int], "beats 20")
+	eq(Scoring.die_marks("Kraken", [6, 6, 6, 2]), [-1, -1, -1, -1] as Array[int], "20 fails")
 	# Marked dice must agree with the count for count-based cards.
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 3
-	for card in ["Razor Mantis", "Animated Flytrap", "Ancient Geometer", "Vampire Bat", "Ghost Knight", "Killer Bee"]:
+	for card in ["Ice Dragon", "Razor Mantis", "Animated Flytrap", "Ancient Geometer", "Vampire Bat", "Ghost Knight", "Killer Bee"]:
 		for t in 200:
 			var vals := []
 			for i in rng.randi_range(0, 10):

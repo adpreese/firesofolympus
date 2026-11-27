@@ -10,7 +10,7 @@ const INK := Color("#2B1D14")       # text, outlines, rules
 const CREAM := Color("#E6D4B2")     # card faces, raised panels, text on coloured fills
 const TAN := Color("#D1B88F")       # the table and ordinary panels
 const OCHRE := Color("#C2A36B")     # the dice tray
-const UMBER := Color("#3C3426")     # ordinary buttons
+const UMBER := Color("#5E4D38")     # ordinary buttons: lighter than INK, so the one primary (ink) stands out
 const OXBLOOD := Color("#9A2B2B")   # Strength
 const NAVY := Color("#2C4A82")      # Sharpness
 const IVORY := Color("#FBF4DE")     # die faces
@@ -65,17 +65,17 @@ static func make_theme() -> Theme:
 		t.set_color(c, "Button", INK)
 	t.set_color("font_disabled_color", "Button", MUTED)
 	t.set_stylebox("normal", "LineEdit", box(CREAM, INK, 2, 8))
-	t.set_stylebox("focus", "LineEdit", box(CREAM, OXBLOOD, 2, 8))
+	t.set_stylebox("focus", "LineEdit", box(CREAM, INK, 3, 8))
 	t.set_color("font_color", "LineEdit", INK)
 	t.set_color("font_placeholder_color", "LineEdit", MUTED)
 	t.set_color("caret_color", "LineEdit", INK)
-	t.set_color("selection_color", "LineEdit", Color(OXBLOOD, 0.35))
+	t.set_color("selection_color", "LineEdit", Color(NAVY, 0.3))
 	for state in ["", "_disabled"]:  # the default icons are dark: invisible on umber buttons
 		t.set_icon("checked" + state, "CheckBox", _check_icon(true))
 		t.set_icon("unchecked" + state, "CheckBox", _check_icon(false))
 	t.set_stylebox("panel", "PanelContainer", box(PANEL, EDGE, 2))
 	t.set_stylebox("panel", "PopupMenu", box(CREAM, INK, 2, 6))
-	t.set_stylebox("hover", "PopupMenu", box(OXBLOOD, OXBLOOD, 0, 4))
+	t.set_stylebox("hover", "PopupMenu", box(UMBER, UMBER, 0, 4))
 	t.set_color("font_color", "PopupMenu", INK)
 	t.set_color("font_hover_color", "PopupMenu", CREAM)
 	t.set_stylebox("panel", "TooltipPanel", box(CREAM, INK, 2, 8))
@@ -84,12 +84,12 @@ static func make_theme() -> Theme:
 		t.set_stylebox("scroll", bar, box(Color(INK, 0.12), INK, 0, 4))
 		t.set_stylebox("grabber", bar, box(UMBER, UMBER, 0, 4))
 		t.set_stylebox("grabber_highlight", bar, box(UMBER.lightened(0.14), UMBER, 0, 4))
-		t.set_stylebox("grabber_pressed", bar, box(OXBLOOD, OXBLOOD, 0, 4))
+		t.set_stylebox("grabber_pressed", bar, box(INK, INK, 0, 4))
 	var groove := box(UMBER, INK, 0, 0)
 	groove.content_margin_top = 4
 	groove.content_margin_bottom = 4
 	t.set_stylebox("slider", "HSlider", groove)
-	var fill := box(OXBLOOD, INK, 0, 0)
+	var fill := box(INK, INK, 0, 0)
 	fill.content_margin_top = 4
 	fill.content_margin_bottom = 4
 	t.set_stylebox("grabber_area", "HSlider", fill)
@@ -123,14 +123,35 @@ static func primary(b: Button) -> Button:
 	return b
 
 
-## Restyle a button as a quiet alternative (e.g. Pass beside Sharpen): an ink outline, no fill.
+## Restyle a button as a quiet alternative (e.g. Pass beside Sharpen): cream with an ink outline.
 static func secondary(b: Button) -> Button:
-	var styles := {"normal": Color(CREAM, 0.0), "hover": Color(CREAM, 0.5), "pressed": CREAM.darkened(0.08),
-		"hover_pressed": CREAM}
+	var styles := {"normal": CREAM, "hover": CREAM.lightened(0.3), "pressed": CREAM.darkened(0.08),
+		"hover_pressed": CREAM.darkened(0.08)}  # solid, so the playmat lattice doesn't show through
 	for st in styles:
 		b.add_theme_stylebox_override(st, box(styles[st], INK, 2, 10))
 	for c in ["font_color", "font_hover_color", "font_focus_color", "font_pressed_color", "font_hover_pressed_color"]:
 		b.add_theme_color_override(c, INK)
+	return b
+
+
+## Restyle a toggle button as one option of a set (setup counts, settings, tabs, Reactions).
+## Off is quiet, flush with the table (tan, thin outline, muted text) so it never reads as a call
+## to action; on is the raised cream face with a heavy ink outline.
+static func option(b: Button) -> Button:
+	var styles := {
+		"normal": box(TAN, Color(INK, 0.55), 2, 10),
+		"hover": box(TAN.lightened(0.12), INK, 2, 10),
+		"pressed": box(CREAM, INK, 4, 10),
+		"hover_pressed": box(CREAM.lightened(0.2), INK, 4, 10),
+		"disabled": box(Color(TAN, 0.0), Color(MUTED, 0.35), 2, 10),  # see-through: not on offer
+	}
+	for st in styles:
+		b.add_theme_stylebox_override(st, styles[st])
+	for c in ["font_color", "font_hover_color", "font_focus_color"]:
+		b.add_theme_color_override(c, MUTED)
+	for c in ["font_pressed_color", "font_hover_pressed_color"]:
+		b.add_theme_color_override(c, INK)
+	b.add_theme_color_override("font_disabled_color", Color(MUTED, 0.5))
 	return b
 
 
@@ -195,10 +216,11 @@ static func background(frame_w := 28.0, frame_span := 0.0) -> Playmat:
 	return r
 
 
-## The SVGs are imported at 2x (svg/scale) so they stay crisp on high-DPI screens;
-## the frame is a nine-slice (tools/make_playmat_frame.py) whose edges repeat whole eggs.
+## Both textures are 2x so they stay crisp on high-DPI screens: the barley-twist lattice is rendered
+## at 2x (tools/make_lattice.gd) and the frame SVG imported at 2x (svg/scale); the frame is a
+## nine-slice (tools/make_playmat_frame.py) whose edges repeat whole eggs.
 class Playmat extends Control:
-	const LATTICE := preload("res://assets/images/table/lattice.svg")
+	const LATTICE := preload("res://assets/images/table/lattice.png")  # tools/make_lattice.gd, 2x
 	const FRAME := preload("res://assets/images/table/frame.svg")
 	const TEX_SCALE := 2.0
 	const FRAME_SRC := 28.0  # frame depth in the SVG
@@ -245,6 +267,11 @@ const CARD_RULE_LINES := 3        # rules text past this is cut, with a folded c
 const CARD_TEXT := 13
 
 
+## Card rules text size: follows the text size setting; the rules well grows and the art gives way.
+static func card_text() -> int:
+	return fs(CARD_TEXT)
+
+
 ## Splits a card's flat stat lines ("+3D6", "-3 AP") out of its rules text for the top bar.
 ## Conditional lines ("+1D6 against Demons") stay in `rest`.
 static func card_stats(body: String) -> Dictionary:
@@ -284,7 +311,7 @@ static func card_tile(title: String, body: String, tex: Texture2D, size := TILE,
 	var st := card_stats(body)
 	var inner := size - Vector2(2 * pad, 2 * pad)
 	var font := FoAssets.font(BODY_FONT)
-	var line_h := font.get_height(CARD_TEXT) + 3
+	var line_h := font.get_height(card_text()) + 3
 	var rules_h := CARD_RULE_LINES * line_h - 3 + 10
 	var gap := 5.0
 	var art_h := inner.y - CARD_BAR_H - 2 * gap - 4 - rules_h
@@ -318,8 +345,8 @@ static func card_tile(title: String, body: String, tex: Texture2D, size := TILE,
 static func _mini_tile(b: Button, title: String, tex: Texture2D, size: Vector2, edge: Color) -> Button:
 	var width := 2 if edge == EDGE else 4
 	b.add_theme_stylebox_override("normal", box(CREAM, edge, width, 0))
-	b.add_theme_stylebox_override("hover", box(CREAM.lightened(0.25), OXBLOOD, maxi(width, 3), 0))
-	b.add_theme_stylebox_override("pressed", box(CREAM.darkened(0.08), OXBLOOD, maxi(width, 3), 0))
+	b.add_theme_stylebox_override("hover", box(CREAM.lightened(0.25), INK if edge == EDGE else edge, maxi(width, 3), 0))
+	b.add_theme_stylebox_override("pressed", box(CREAM.darkened(0.08), INK, maxi(width, 3), 0))
 	b.add_theme_stylebox_override("disabled", box(CREAM, edge, width, 0))
 	var v := VBoxContainer.new()
 	v.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -336,9 +363,10 @@ static func _mini_tile(b: Button, title: String, tex: Texture2D, size: Vector2, 
 		var blank := Control.new()
 		blank.custom_minimum_size = Vector2(art_size, art_size)
 		v.add_child(blank)
-	# Tile text stays at its base size (the tile can't grow); the zoom view is for reading.
-	var name_label := heading(title, 11, INK)
-	name_label.add_theme_font_size_override("font_size", 11)
+	# The name follows the text size, up to what two lines in the tile can hold.
+	var name_px := mini(fs(11), 13)
+	var name_label := heading(title, name_px, INK)
+	name_label.add_theme_font_size_override("font_size", name_px)
 	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(name_label)
 	_ignore_mouse(v)
@@ -401,15 +429,15 @@ static func _card_frame(b: Button, edge: Color) -> int:
 static func _card_bar(title: String, st: Dictionary, width: float) -> Control:
 	var chips: Array[Control] = []
 	if st.dice != null:
-		chips.append(_stat_chip("%d" % st.dice, true))
+		chips.append(stat_chip(st.dice, true))
 	if st.ap != null:
-		chips.append(_stat_chip("%+d" % st.ap, false))
+		chips.append(stat_chip(st.ap, false))
 	var chips_w := 0.0
 	for c in chips:
 		chips_w += c.custom_minimum_size.x + 3
 	var text_w := width - 12 - chips_w
 	var font := FoAssets.font(HEADING_FONT)
-	var size := 14
+	var size := fs(14)
 	while size > 12 and font.get_string_size(title, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x > text_w:
 		size -= 1
 	for word in title.split(" "):  # a word never breaks mid-word
@@ -439,29 +467,127 @@ static func _card_bar(title: String, st: Dictionary, width: float) -> Control:
 	return bar
 
 
-## A stat token, shaped by meaning: a gold die face (dice count) or a silver diamond (AP).
-static func _stat_chip(n: String, dice: bool) -> Control:
-	var bold := FoAssets.font(BOLD_FONT)
-	var metal := GILT if dice else SILVER
-	var c := Control.new()
-	c.custom_minimum_size = Vector2(26 if dice else 28, 26)
-	c.draw.connect(func():
-		var s := c.size
+## A stat token: the one place a dice count (a gold die face, "3" for +3D6) or an AP change
+## (a silver diamond, "+2") is drawn, wherever it shows: card bars, rules text, Challenge rules,
+## the Sharpen button. A Texture2D, so it sits inline in rich text or as a Button icon.
+## When there's icon art, draw it in `_paint` and every place picks it up.
+class StatMark extends Texture2D:
+	var n := ""
+	var dice := true
+	var px := 26.0
+
+	func _init(text := "", is_dice := true, height := 26.0) -> void:
+		n = text
+		dice = is_dice
+		px = height
+
+	func _get_width() -> int:
+		return roundi(px if dice else px * 28.0 / 26.0)
+
+	func _get_height() -> int:
+		return roundi(px)
+
+	func _has_alpha() -> bool:
+		return true
+
+	func _draw(ci: RID, pos: Vector2, _modulate: Color, _transpose: bool) -> void:
+		_paint(ci, Rect2(pos, get_size()))
+
+	func _draw_rect(ci: RID, rect: Rect2, _tile: bool, _modulate: Color, _transpose: bool) -> void:
+		_paint(ci, rect)
+
+	func _draw_rect_region(ci: RID, rect: Rect2, _src: Rect2, _modulate: Color, _transpose: bool, _clip_uv: bool) -> void:
+		_paint(ci, rect)
+
+	func _paint(ci: RID, r: Rect2) -> void:
+		var rs := RenderingServer
+		var k := r.size.y / 26.0  # line widths are tuned at the card bar's 26 px
 		if dice:
-			c.draw_rect(Rect2(Vector2.ZERO, s), metal)
-			c.draw_rect(Rect2(Vector2(1, 1), s - Vector2(2, 2)), metal.lightened(0.35), false, 1.0)
-			c.draw_rect(Rect2(Vector2.ZERO, s), INK, false, 1.5)
+			rs.canvas_item_add_rect(ci, r, FoUI.GILT)
+			var hi := Rect2(r.position + Vector2(k, k), r.size - Vector2(2 * k, 2 * k))
+			_outline(ci, hi, FoUI.GILT.lightened(0.35), maxf(1.0, k))
+			_outline(ci, r, FoUI.INK, 1.5 * k)
 		else:
-			var m := s / 2
-			var pts := PackedVector2Array([Vector2(m.x, 0), Vector2(s.x, m.y), Vector2(m.x, s.y), Vector2(0, m.y)])
-			c.draw_colored_polygon(pts, metal)
+			var c := r.get_center()
+			var pts := PackedVector2Array([Vector2(c.x, r.position.y), Vector2(r.end.x, c.y), Vector2(c.x, r.end.y), Vector2(r.position.x, c.y)])
+			rs.canvas_item_add_polygon(ci, pts, PackedColorArray([FoUI.SILVER]))
 			pts.append(pts[0])
-			c.draw_polyline(pts, INK, 1.5, true)
-		var fsz := 13 if n.length() < 3 else 11
+			rs.canvas_item_add_polyline(ci, pts, PackedColorArray([FoUI.INK]), 1.5 * k, true)
+		var bold := FoAssets.font(FoUI.BOLD_FONT)
+		var fsz := maxi(9, roundi((13.0 if n.length() < 3 else 11.0) * k))
 		var tw := bold.get_string_size(n, HORIZONTAL_ALIGNMENT_LEFT, -1, fsz).x
-		c.draw_string(bold, Vector2((s.x - tw) / 2, s.y / 2 + bold.get_ascent(fsz) / 2 - 1), n,
-			HORIZONTAL_ALIGNMENT_LEFT, -1, fsz, INK))
-	return c
+		var at := Vector2(r.get_center().x - tw / 2, r.get_center().y + bold.get_ascent(fsz) / 2 - k)
+		bold.draw_string(ci, at, n, HORIZONTAL_ALIGNMENT_LEFT, -1, fsz, FoUI.INK)
+
+	func _outline(ci: RID, r: Rect2, color: Color, w: float) -> void:
+		var rs := RenderingServer
+		rs.canvas_item_add_rect(ci, Rect2(r.position, Vector2(r.size.x, w)), color)
+		rs.canvas_item_add_rect(ci, Rect2(Vector2(r.position.x, r.end.y - w), Vector2(r.size.x, w)), color)
+		rs.canvas_item_add_rect(ci, Rect2(r.position, Vector2(w, r.size.y)), color)
+		rs.canvas_item_add_rect(ci, Rect2(Vector2(r.end.x - w, r.position.y), Vector2(w, r.size.y)), color)
+
+
+## The token for `count` dice (gold die, "3"; negative = dice lost) or AP (silver diamond, "+2").
+static func stat_mark(count: int, dice: bool, height := 26.0) -> StatMark:
+	return StatMark.new(("%d" if dice else "%+d") % count, dice, height)
+
+
+## A stat token as a Control (TextureRect), e.g. in a card's top bar.
+static func stat_chip(count: int, dice: bool, height := 26.0) -> TextureRect:
+	var t := TextureRect.new()
+	t.texture = stat_mark(count, dice, height)
+	t.custom_minimum_size = t.texture.get_size()
+	t.stretch_mode = TextureRect.STRETCH_KEEP
+	t.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return t
+
+
+## "+3D6", "-1d6", "+ 2 AP" in display text; group 1 sign, 2 count, 3 unit.
+static func _stat_re() -> RegEx:
+	return RegEx.create_from_string("([+-]?)\\s*(\\d+)\\s*(D6|d6|AP)\\b")
+
+
+## Display text split into plain strings and stat tokens ({count, dice}), for `rich`.
+static func stat_runs(text: String) -> Array:
+	var out := []
+	var at := 0
+	for m in _stat_re().search_all(text):
+		if m.get_start() > at:
+			out.append(text.substr(at, m.get_start() - at))
+		var count := int(m.get_string(2)) * (-1 if m.get_string(1) == "-" else 1)
+		out.append({"count": count, "dice": m.get_string(3) != "AP"})
+		at = m.get_end()
+	if at < text.length():
+		out.append(text.substr(at))
+	return out
+
+
+## A wrapped label whose dice counts ("+2D6") and AP ("-1 AP") show as stat tokens, sized to the text.
+## Use for any display text that may name dice or AP (rules text, Challenge rules, results).
+## `scaled` = false keeps `size` as is (for a size already scaled, e.g. `card_text()`).
+static func rich(text: String, size := 22, color := INK, wrap := true, align := HORIZONTAL_ALIGNMENT_LEFT,
+		font: Font = null, scaled := true) -> RichTextLabel:
+	var px := fs(size) if scaled else size
+	var r := RichTextLabel.new()
+	r.bbcode_enabled = false
+	r.fit_content = true
+	r.scroll_active = false
+	r.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART if wrap else TextServer.AUTOWRAP_OFF
+	r.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	r.add_theme_font_override("normal_font", font if font != null else FoAssets.font(BODY_FONT))
+	r.add_theme_font_size_override("normal_font_size", px)
+	r.add_theme_color_override("default_color", color)
+	r.add_theme_constant_override("line_separation", 3)
+	r.horizontal_alignment = align
+	var h := roundf(px * 1.45)
+	for run in stat_runs(text):
+		if run is String:
+			r.add_text(run)
+		else:
+			var mark := stat_mark(run.count, run.dice, h)
+			r.add_image(mark, mark.get_width(), mark.get_height(), Color.WHITE, INLINE_ALIGNMENT_CENTER)
+	r.set_meta("plain", text)  # tests and `_card_rules` read the source text
+	return r
 
 
 ## The rules well: up to CARD_RULE_LINES lines. Longer text ends in "…" and the well gets a
@@ -471,14 +597,21 @@ static func _card_rules(text: String, width: float) -> Control:
 	var face := CARD_FACE
 	var under := CARD_FOLD
 	var line := CARD_LINE
-	var more := _text_height(font, text, CARD_TEXT, width - 10) > CARD_RULE_LINES * (font.get_height(CARD_TEXT) + 3)
+	var px := card_text()
+	var more := _text_height(font, text, px, width - 10) > CARD_RULE_LINES * (font.get_height(px) + 3)
 	var p := panel(_flat(CARD_WELL, 4, [CARD_LINE, 1]))
-	var l := label(text.replace("\n", " ") if more else text, CARD_TEXT, INK)
-	l.add_theme_font_size_override("font_size", CARD_TEXT)
-	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	var shown := text
+	if more:  # cut whole words until it fits, then "…" (rich text has no line limit of its own)
+		var words := text.replace("\n", " ").split(" ", false)
+		var max_h := CARD_RULE_LINES * (font.get_height(px) + 3)
+		while words.size() > 1 and _text_height(font, " ".join(words) + "…", px, width - 10) > max_h:
+			words.resize(words.size() - 1)
+		shown = " ".join(words) + "…"
+	var l := rich(shown, px, INK, true, HORIZONTAL_ALIGNMENT_CENTER, font, false)
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD  # whole words only, as `_text_height` measures
+	l.fit_content = false
 	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	l.max_lines_visible = CARD_RULE_LINES
-	l.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	l.clip_contents = true
 	p.add_child(l)
 	var w := Control.new()
 	p.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -504,7 +637,7 @@ static func _text_height(font: Font, text: String, size: int, width: float) -> f
 
 
 ## One die face. mark: 1 = scores / protects (green, thick border), -1 = triggers a penalty (red).
-## armed: a Reaction is chosen and this die can take it (oxblood outline, hover lifts).
+## armed: a Reaction is chosen and this die can take it (heavy ink outline, hover lifts).
 static func die_face(value: int, mark: int, magic: bool, carried: bool, size: float, selected := false, armed := false) -> Button:
 	var b := Button.new()
 	b.text = str(value)
@@ -522,9 +655,9 @@ static func die_face(value: int, mark: int, magic: bool, carried: bool, size: fl
 		-1:
 			border = RED
 			width = 6
-	if armed and mark == 0:
-		border = OXBLOOD
-		width = 4
+	if armed and mark == 0:  # takes the chosen Reaction: a heavy ink "act here" outline
+		border = INK
+		width = 5
 	var style := box(bg, border, width, 0)
 	style.shadow_color = Color(INK, 0.35)
 	style.shadow_size = 0
@@ -532,7 +665,7 @@ static func die_face(value: int, mark: int, magic: bool, carried: bool, size: fl
 	for state in ["normal", "hover", "pressed", "disabled", "focus"]:
 		b.add_theme_stylebox_override(state, style)
 	if armed:
-		var lit := box(Color("#F3D98C"), OXBLOOD if mark == 0 else border, width, 0)
+		var lit := box(Color("#F3D98C"), INK if mark == 0 else border, width, 0)
 		b.add_theme_stylebox_override("hover", lit)
 		b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	var magic_ink := NAVY
@@ -583,7 +716,7 @@ static func pips(filled: int, total: int, color := INK, size := 14.0) -> HBoxCon
 	return row
 
 
-## A dice pool without a box: a small square in the Challenge's colour, then "2d6" in it.
+## A dice pool without a box: a small square in the Challenge's colour, then the gold die token.
 static func pool(dice: int, color: Color, size := 18) -> HBoxContainer:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 5)
@@ -592,7 +725,9 @@ static func pool(dice: int, color: Color, size := 18) -> HBoxContainer:
 	sq.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	sq.add_theme_stylebox_override("panel", box(color, color, 0, 0))
 	row.add_child(sq)
-	row.add_child(label("%dd6" % dice, size, color, false))
+	var mark := stat_chip(dice, true, fs(size) + 6)
+	mark.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(mark)
 	return row
 
 
