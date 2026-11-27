@@ -1,143 +1,66 @@
-## Barley-twist lattice tile for the playmat -> assets/images/table/lattice.png
+## Woven lattice tile for the playmat -> assets/images/table/lattice.png
 ##   godot --headless --script res://tools/make_lattice.gd
-## Ray-cast per pixel rather than drawn: each diagonal of the T x T tile is a turned bar with
-## STARTS helical grooves (a height field), lit from the upper left, casting a soft shadow on the
-## mat; square bevelled rivets cap the crossings. Rendered at 2x (FoUI.Playmat draws it at half
-## scale) with SS x SS supersampling. N grooves per half diagonal keeps the twist in phase at the
-## tile edges, so it tiles seamlessly.
+## Flat, like a pattern woven into a tapestry rather than laid on it: the T x T tile is a grid of
+## S-unit stitches, and the diagonals are stair-stepped runs of darker thread. Every stitch (ground
+## and pattern alike) carries the same basket weave, so the lattice reads as part of the cloth.
+## Small stepped diamonds mark the crossings. Rendered at 2x
+## (FoUI.Playmat draws it at half scale); N stitches per tile keeps it seamless.
 extends SceneTree
 
 const T := 192.0
 const OUT := 2          # output pixels per tile unit
-const SS := 3           # supersamples per output pixel, per axis
-const N := 11           # grooves per half diagonal
-const STARTS := 2       # helix starts (double twist, like the balusters)
-const W := 4.6          # bar radius at a ridge crown
-const W_IN := 2.9       # bar radius at the bottom of a groove
-const RIVET := 7.5      # rivet half diagonal
-const RIVET_TOP := 6.4  # rivet height (bars peak at W)
-const BEAD := 2.8       # width of the turned collar where a twist meets a rivet
-const NAIL := 2.3       # nailhead radius in the middle of each open diamond
+const S := 3.0          # stitch size in tile units
+const N := 64           # stitches per tile edge (T / S)
+const RISE := 2         # stitch rows per stair step
+const TREAD := 3        # stitches per tread (overlapping the next by TREAD - RISE)
+const WEAVE := 0.06     # basket-weave light/dark swing on the ground
+const WEAVE_PATTERN := 0.025  # and on the pattern, kept low so its edges stay crisp
 
-const MAT := Color("#D1B88F")
-const WOOD := Color("#CDB38A")
-const WOOD_DARK := Color("#B49C75")
-const WOOD_LIGHT := Color("#D9C39C")
-const SHADOW := Color("#A68B62")
-
-var HALF := T / sqrt(2.0)
-var SP := HALF / N
-var P := SP * STARTS
-var L := Vector3(-0.42, -0.62, 0.66).normalized()
-var H := (L + Vector3(0, 0, 1)).normalized()
+const MAT := Color("#D1B88F")       # ground thread
+const BAND := Color("#B39874")      # the stair-step diagonals
+const KNOT := Color("#A68B62")      # crossing diamonds, flat
 
 
-## Radius of the bar at helix phase f in [0, 1): round ridges, narrow grooves.
-func prof(f: float) -> float:
-	return W_IN + (W - W_IN) * pow(sin(PI * f), 0.45)
-
-
-## Height of one twisted bar at axial u, lateral v (-1 = miss). Solves the helix phase
-## at the surface angle a few times, since the radius depends on where you hit it.
-func bar_h(u: float, v: float) -> float:
-	if absf(v) >= W + 0.6:
-		return -1.0
-	# turned collar: a plain neck under the rivet, then a round bead, then the twist starts
-	var a := absf(u - roundf(u / HALF) * HALF)
-	var neck := RIVET / sqrt(2.0)
-	if a < neck + BEAD:
-		var r0 := W * 0.85
-		if a > neck:
-			r0 += (W + 0.6 - r0) * sqrt(sin(PI * (a - neck) / BEAD))
-		return sqrt(r0 * r0 - v * v) if absf(v) < r0 else -1.0
-	if absf(v) >= W:
-		return -1.0
-	var r := W
-	for i in 4:
-		var th := asin(clampf(v / r, -1.0, 1.0))
-		r = prof(fposmod(u - P * th / TAU, SP) / SP)
-	if absf(v) >= r:
-		return -1.0
-	return sqrt(r * r - v * v)
-
-
-func rivet_h(x: float, y: float) -> float:
-	# nearest crossing: the centre or a corner
-	var c := Vector2(T / 2, T / 2)
-	var best := c.distance_squared_to(Vector2(x, y))
-	for k in [Vector2(0, 0), Vector2(T, 0), Vector2(0, T), Vector2(T, T)]:
-		var d: float = k.distance_squared_to(Vector2(x, y))
-		if d < best:
-			best = d
-			c = k
-	var m := absf(x - c.x) + absf(y - c.y)
-	if m >= RIVET:
-		return -1.0
-	var top := RIVET * 0.5
-	var h := RIVET_TOP if m < top else lerpf(RIVET_TOP, W * 0.55, (m - top) / (RIVET - top))
-	var p := Vector2(x, y).distance_to(c)  # domed pin in the middle
-	if p < 1.5:
-		h += sqrt(1.5 * 1.5 - p * p) * 0.8
-	return h
-
-
-## Height of everything at (x, y); -1 on the bare mat. The two families share the tile's period.
-func height(x: float, y: float) -> float:
-	var s2 := sqrt(2.0)
-	var d1 := (y - x) / s2
-	var h1 := bar_h((x + y) / s2, d1 - roundf(d1 / HALF) * HALF)
-	var d2 := (x + y) / s2
-	var h2 := bar_h((x - y) / s2, d2 - roundf(d2 / HALF) * HALF)
-	var h := maxf(maxf(h1, h2), rivet_h(x, y))
-	for c in [Vector2(T / 2, 0), Vector2(T / 2, T), Vector2(0, T / 2), Vector2(T, T / 2)]:
-		var d: float = c.distance_to(Vector2(x, y))
-		if d < NAIL:
-			h = maxf(h, sqrt(NAIL * NAIL - d * d) * 0.6)
-	return h
+## Stitch colour at cell (cx, cy).
+func stitch(cx: int, cy: int) -> Color:
+	# crossings sit on cell corners: the tile corners and its centre
+	for c in [Vector2(0, 0), Vector2(N, 0), Vector2(0, N), Vector2(N, N), Vector2(N / 2, N / 2)]:
+		var m := absf(cx + 0.5 - c.x) + absf(cy + 0.5 - c.y)
+		if m <= 3.0:
+			return KNOT
+	# stair-stepped diagonals in one flat colour
+	var r := int(floor(float(cy) / RISE)) * RISE
+	var i1 := posmod(cx - r + 1, N)
+	if i1 < TREAD:
+		return BAND
+	var i2 := posmod(-cx - 1 - r + 1, N)
+	if i2 < TREAD:
+		return BAND
+	return MAT
 
 
 func shade(x: float, y: float) -> Color:
-	var h := height(x, y)
-	if h < 0.0:
-		# soft cast shadow: is something between here and the light?
-		var hit := 0.0
-		for k in [1.0, 1.7, 2.4, 3.1]:
-			var q: float = height(x + L.x / L.z * k, y + L.y / L.z * k)
-			if q >= k:
-				hit += 1.0
-			elif q >= 0.0:
-				hit += 0.5
-		return MAT.lerp(SHADOW, 0.15 * hit / 4.0)
-	var e := 0.12
-	var hx0 := maxf(height(x - e, y), 0.0)
-	var hx1 := maxf(height(x + e, y), 0.0)
-	var hy0 := maxf(height(x, y - e), 0.0)
-	var hy1 := maxf(height(x, y + e), 0.0)
-	var n := Vector3(-(hx1 - hx0) / (2 * e), -(hy1 - hy0) / (2 * e), 1.0).normalized()
-	var diff := maxf(n.dot(L), 0.0)
-	var spec := pow(maxf(n.dot(H), 0.0), 28.0)
-	# grooves catch less ambient light than the crowns
-	var ao := clampf((h - W_IN * 0.6) / (W - W_IN * 0.6), 0.0, 1.0)
-	var lum := 0.22 + 0.78 * diff * (0.55 + 0.45 * ao)
-	var c := WOOD_DARK.lerp(WOOD, clampf(lum / 0.72, 0.0, 1.0))
-	if lum > 0.72:
-		c = WOOD.lerp(WOOD_LIGHT, clampf((lum - 0.72) / 0.28, 0.0, 1.0))
-	return c.lerp(WOOD_LIGHT, spec * 0.3)
+	var cx := int(floor(x / S))
+	var cy := int(floor(y / S))
+	var base := stitch(posmod(cx, N), posmod(cy, N))
+	# basket weave: two threads per stitch, running across or down in alternate stitches,
+	# each rounded (lit in the middle, dim where it dips under its neighbour)
+	var u := fposmod(x, S) / S
+	var v := fposmod(y, S) / S
+	var f := v if (cx + cy) % 2 == 0 else u
+	var thread := sin(PI * fposmod(f * 2.0, 1.0))   # 0 at the gaps, 1 at a thread's crown
+	var k := (thread - 0.6) * (WEAVE if base == MAT else WEAVE_PATTERN) * 2.0
+	if k >= 0.0:
+		return base.lightened(k)
+	return base.darkened(-k)
 
 
 func _init() -> void:
 	var px := int(T) * OUT
 	var img := Image.create(px, px, false, Image.FORMAT_RGB8)
-	var step := 1.0 / (OUT * SS)
 	for j in px:
 		for i in px:
-			var acc := Color(0, 0, 0)
-			for sj in SS:
-				for si in SS:
-					var c := shade((i * SS + si + 0.5) * step, (j * SS + sj + 0.5) * step)
-					acc.r += c.r; acc.g += c.g; acc.b += c.b
-			var k := 1.0 / (SS * SS)
-			img.set_pixel(i, j, Color(acc.r * k, acc.g * k, acc.b * k))
+			img.set_pixel(i, j, shade((i + 0.5) / OUT, (j + 0.5) / OUT))
 	var path := "res://assets/images/table/lattice.png"
 	var args := OS.get_cmdline_user_args()
 	if not args.is_empty():

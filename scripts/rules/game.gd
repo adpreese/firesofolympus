@@ -338,6 +338,8 @@ func die_value(pi: int, die: Die, kind: String) -> int:
 
 ## How a die reached its final value: [{text, value}], starting with the roll.
 ## Each later entry is one change; the last entry's value equals die_value().
+## [{text, value, kind, src}]: kind is roll / magic / swap (Bronze) / add / cap / ignore (Celestial Ore);
+## src is the Ingredient behind the step ("" for the roll, penalties and Reactions).
 func die_breakdown(pi: int, die: Die, kind: String) -> Array:
 	var steps := []
 	_die_calc(pi, die, kind, steps)
@@ -355,47 +357,52 @@ func _die_calc(pi: int, die: Die, kind: String, steps) -> int:
 			src = die.origin
 		elif die.carried and kind == SHARPNESS:
 			src = "Kept from Strength, rolled"
-		steps.append({"text": "%s %d" % [src, v], "value": v})
+		steps.append({"text": "%s %d" % [src, v], "value": v, "kind": "roll", "src": ""})
 	if die.magic:
 		v = 5 if v <= 3 else 6
 		if steps != null:
-			steps.append({"text": "Magic die (Sphinx's Milk): 1-3 -> 5, 4-6 -> 6", "value": v})
-	var bronze := false
-	var leather := false
-	var mods := []  # [label, delta], applied together after Effects
+			steps.append({"text": "Magic die (Sphinx's Milk): 1-3 -> 5, 4-6 -> 6", "value": v, "kind": "magic", "src": ""})
+	var bronze := ""   # the card giving each Effect, "" if none
+	var leather := ""
+	var ignore := ""
+	var mods := []  # [label, delta, source card], applied together after Effects
 	for c in p.ingredients:
 		var d := def_of(c)
-		if d.get("bronze", false):
-			bronze = true
-		if d.get("leather", false):
-			leather = true
+		if d.get("bronze", false) and bronze == "":
+			bronze = c.name
+		if d.get("leather", false) and leather == "":
+			leather = c.name
+		if d.get("ignore_34", false) and ignore == "":
+			ignore = c.name
 		if d.has("mod"):
-			mods.append([c.name, int(d.mod)])
+			mods.append([c.name, int(d.mod), c.name])
 		if kind == SHARPNESS and d.has("sharp_mod"):
-			mods.append([c.name, int(d.sharp_mod)])
-	if bronze and (v == 1 or v == 6):
+			mods.append([c.name, int(d.sharp_mod), c.name])
+	if bronze != "" and (v == 1 or v == 6):
 		v = 2 if v == 1 else 5
 		if steps != null:
-			steps.append({"text": "Bronze: 1 -> 2, 6 -> 5", "value": v})
-	if leather and (v == 2 or v == 3):  # checks the post-Effect value
-		mods.append(["Leather Grip (on a 2 or 3)", 2])
+			steps.append({"text": "Bronze: 1 -> 2, 6 -> 5", "value": v, "kind": "swap", "src": bronze})
+	if leather != "" and (v == 2 or v == 3):  # checks the post-Effect value
+		mods.append(["Leather Grip (on a 2 or 3)", 2, leather])
 	var penalty: Dictionary = p.penalty
 	if kind == SHARPNESS and int(penalty.get("die_mod", 0)) != 0:
-		mods.append(["%s penalty" % strength_card.get("name", "Strength"), int(penalty.die_mod)])
+		mods.append(["%s penalty" % strength_card.get("name", "Strength"), int(penalty.die_mod), ""])
 	for m in mods:
 		v += m[1]
 		if steps != null and m[1] != 0:
-			steps.append({"text": "%s %+d" % m, "value": v})
+			steps.append({"text": "%s %+d" % [m[0], m[1]], "value": v, "kind": "add", "src": m[2]})
 	if die.bonus != 0:
 		v += die.bonus
 		if steps != null:
-			steps.append({"text": "Reactions %+d" % die.bonus, "value": v})
+			steps.append({"text": "Reactions %+d" % die.bonus, "value": v, "kind": "add", "src": ""})
 	if kind == SHARPNESS and penalty.has("cap") and v > penalty.cap:
 		v = penalty.cap
 		if steps != null:
-			steps.append({"text": "Capped at %d (%s penalty)" % [penalty.cap, strength_card.get("name", "Strength")], "value": v})
-	if steps != null and kind == SHARPNESS and (v == 3 or v == 4) and flag_sum(pi, "ignore_34") > 0:
-		steps.append({"text": "Doesn't count for Successes (Celestial Ore ignores 3s and 4s)", "value": v})
+			steps.append({"text": "Capped at %d (%s penalty)" % [penalty.cap, strength_card.get("name", "Strength")],
+				"value": v, "kind": "cap", "src": ""})
+	if steps != null and kind == SHARPNESS and (v == 3 or v == 4) and ignore != "":
+		steps.append({"text": "Doesn't count for Successes (Celestial Ore ignores 3s and 4s)", "value": v,
+			"kind": "ignore", "src": ignore})
 	return v
 
 
@@ -449,7 +456,7 @@ func counted(pi: int, vals: Array) -> Array:
 
 
 ## Per die, for the UI: 1 = scores (or saves you from a penalty), -1 = triggers a penalty, 0 = neither.
-func die_marks(pi: int, kind: String) -> Array[int]:
+func die_marks(pi: int, kind: String, with_mithril := true) -> Array[int]:
 	var vals := values(pi, kind)
 	var marks: Array[int]
 	if kind == SHARPNESS and flag_sum(pi, "ignore_34") > 0:  # mark only the dice that count
@@ -467,7 +474,7 @@ func die_marks(pi: int, kind: String) -> Array[int]:
 		marks = Scoring.die_marks(challenge_card(kind).name, vals)
 	if kind == STRENGTH and challenge_card(kind).name == "Kraken" and flag_sum(pi, "auto_penalty") > 0:
 		marks.fill(-1)  # Kraken Blood: the penalty comes whatever the total
-	if kind == SHARPNESS and flag_sum(pi, "mithril") > 0:
+	if with_mithril and kind == SHARPNESS and flag_sum(pi, "mithril") > 0:
 		for i in vals.size():
 			if vals[i] >= 6:
 				marks[i] = 1

@@ -22,9 +22,12 @@ const RATTLE_GAP := 0.11   # dice knocking together in the hand while Roll is he
 const DIE_CLICK_GAP := 0.09 # dice clicks (hits, landings) closer than this are dropped
 const DIE_STEP_GAP := 0.1   # breakdown step pops closer than this are dropped
 const DIE_GAP := 10.0      # between dice in the row (the HFlow separation)
-const STEP_GAP := 0.32     # each round of Effects / Modifiers / Reactions on the settled dice
 const MARK_GAP := 0.14     # scoring dice light up one by one, pitch rising
 const PENALTY_GAP := 0.24  # then penalty dice crunch, slower, pitch falling
+const EFFECT_GAP := 0.38   # each Ingredient's Effect / Modifier on the settled dice
+const COUNT_TICK := 0.09   # a +N die counts through each value this fast
+const MITHRIL_GAP := 0.26  # Mithril's extra ✓ on a scoring 6
+const FLAT_GAP := 0.6      # a flat Success (Lucky Fish Scale) rising off its card into the line
 const FLIGHT_TIME := 0.35  # a card moving between the table and a mat
 const FADE_TIME := 0.22    # overlays fading in
 
@@ -1148,6 +1151,7 @@ func _render_actions() -> void:
 	if p.is_bot:
 		if game.phase == FoGame.Phase.REACT:
 			_render_dice(false)
+			_render_result_line()
 		else:
 			action_box.add_child(_prompt("…"))  # keeps the table from jumping between turns
 		return
@@ -1207,14 +1211,18 @@ func _render_craft() -> void:
 		action_box.add_child(row)
 
 
-func _render_react() -> void:
-	_render_dice(true)
+## The result line under the dice (people's and CPUs' rolls). During a full reveal it is either the
+## live Successes count (Sharpness, `_count_to`) or held back until the dice settle: returns false then.
+func _render_result_line() -> bool:
 	var rv := _live_reveal()
-	if _waiting_to_throw():
-		action_box.add_child(_roll_button(game.player().dice.size()))
-		return
+	if rv.has("count"):
+		var live := FoUI.heading(FoGame.successes_text(rv.count), 22, _result_color())
+		live.modulate.a = 1.0 if rv.get("counting", false) else 0.0  # keeps its place until the first Success
+		action_box.add_child(live)
+		reveal.head = live
+		return false
 	if rv.get("full", false):
-		return  # the result line arrives once every die has settled
+		return false  # the result line arrives once every die has settled
 	var said: String = rv.get("old_text", _result_text())
 	var head: Control
 	if FoUI.stat_runs(said).any(func(run): return run is Dictionary):  # "-1D6 on Sharpness": a die token
@@ -1225,6 +1233,17 @@ func _render_react() -> void:
 	if not result_fx.is_empty():
 		_result_fx(head, result_fx)
 		result_fx = {}
+	return true
+
+
+func _render_react() -> void:
+	_render_dice(true)
+	var rv := _live_reveal()
+	if _waiting_to_throw():
+		action_box.add_child(_roll_button(game.player().dice.size()))
+		return
+	if not _render_result_line():
+		return
 	var reactions := game.available_reactions(game.current)
 	var still_valid := false
 	if not reactions.is_empty():
@@ -1303,11 +1322,16 @@ func _render_dice(clickable: bool) -> void:
 		var d = p.dice[i]
 		var v := game.die_value(game.current, d, game.challenge_kind)
 		var mark := marks[i]
+		var ignored := _ignored(v)
+		var bonus := mark == 1 and _mithril_six(v)
 		if not rv.is_empty():  # what the reveal has shown so far
 			v = rv.shown[i].value
 			mark = rv.shown[i].mark
+			ignored = rv.shown[i].get("ignored", false)
+			bonus = rv.shown[i].get("mithril", false)
 		var armed := clickable and rv.is_empty() and selected_reaction != ""
-		var b := FoUI.die_face(v, mark, d.magic, d.carried, _die_size(), clickable and i == selected_die, armed)
+		var b := FoUI.die_face(v, mark, d.magic, d.carried, _die_size(), clickable and i == selected_die, armed,
+			ignored, bonus)
 		if not rv.is_empty() and rv.shown[i].rolling:
 			b.text = "" if _resting_in_hand() else str(randi_range(1, 6))  # cosmetic only: never touches game.rng
 		if clickable and rv.is_empty():
@@ -2235,9 +2259,13 @@ func _animate() -> bool:
 ## The dice reveal, played as a timeline of events in _process:
 ## 1. the dice are thrown into the tray and bounce about (`_tumble`), each showing its face as it
 ##    stops, then they snap into a row;
-## 2. each round of `FoGame.die_breakdown` steps ticks across the dice with a floating +1 / -1;
-## 3. scoring dice light up one by one (pitch rising), then penalty dice crunch (pitch falling,
-##    the tray shakes); 4. the result line counts up, or on a Strength penalty slams down.
+## 2. each Effect / Modifier of `FoGame.die_breakdown` plays in turn across every die it touches
+##    (`_effect_events`): its Ingredient lifts and shakes on the mat (`_show_ingredient`), the dice
+##    take a gold outline and count (+N), flip (Bronze), are capped, or are struck out (Celestial Ore);
+## 3. scoring dice light up one by one (pitch rising; on Sharpness the Successes line counts up with
+##    them, Mithril adding its own ✓ on 6s), flat Successes (Lucky Fish Scale) rise off their card,
+##    then penalty dice crunch (pitch falling, the tray shakes); 4. the result line pops, or on a
+##    Strength penalty slams down.
 ## A Reaction replays only the dice it changed (`was` is the snapshot before it).
 ## Purely cosmetic: it reads FoGame but never changes it, and never draws from game.rng.
 func _start_reveal(was: Dictionary) -> void:
@@ -2255,31 +2283,23 @@ func _start_reveal(was: Dictionary) -> void:
 	var t := 0.0
 	if full:
 		var all_steps := []
-		var rounds := 0
 		for i in n:
 			var steps := game.die_breakdown(game.current, p.dice[i], kind)
 			all_steps.append(steps)
-			rounds = maxi(rounds, steps.size() - 1)
 			shown.append({"value": steps[0].value, "mark": 0, "rolling": true})
-		t = 0.15  # the timeline starts once the thrown dice have snapped into their row
-		for k in range(1, rounds + 1):
-			var j := 0
-			for i in n:
-				var steps: Array = all_steps[i]
-				if k < steps.size():
-					var delta: int = steps[k].value - steps[k - 1].value
-					events.append([t + j * 0.05, _step.bind(i, steps[k].value, delta, 0.9 + 0.1 * k + 0.03 * j)])
-					j += 1
-			t += STEP_GAP
+		t = _effect_events(all_steps, events, 0.15)  # once the thrown dice have snapped into their row
 	else:
 		for i in n:
 			var rerolled: bool = p.dice[i].raw != was.raws[i]
-			shown.append({"value": was.vals[i], "mark": 0 if rerolled else was.marks[i], "rolling": rerolled})
+			shown.append({"value": was.vals[i], "mark": 0 if rerolled else was.marks[i], "rolling": rerolled,
+				"ignored": _ignored(was.vals[i])})
 			if rerolled:
 				events.append([0.35, _land.bind(i, vals[i], 1.0)])
 			elif vals[i] != was.vals[i]:
 				events.append([0.05, _step.bind(i, vals[i], vals[i] - was.vals[i], 1.1)])
-		t = 0.5
+			if _ignored(vals[i]) != shown[i].ignored:
+				events.append([0.45, _strike.bind(i, _ignored(vals[i]))])
+		t = 0.55
 	var goods := []
 	var bads := []
 	for i in n:
@@ -2291,9 +2311,42 @@ func _start_reveal(was: Dictionary) -> void:
 			bads.append(i)
 		else:
 			events.append([t, _mark.bind(i, 0, 1.0)])
+	# Full Sharpness reveal: the Successes line counts up with the ✓s, coin and chime together.
+	# The Challenge's Successes are spread over the dice it marks (a Vampire Bat pair ticks on its
+	# second die); Mithril adds its own on each 6; flat ones (Lucky Fish Scale) follow the dice.
+	var counting := full and kind == FoGame.SHARPNESS
+	var parts := game.success_parts(game.current, vals) if counting else []
+	var card_marks := game.die_marks(game.current, kind, false)
+	var card_goods := 0
+	for i in goods:
+		if card_marks[i] == 1:
+			card_goods += 1
+	var mithril := []  # the Mithril cards held (one extra Success per 6 each)
+	var flats := []    # [card, n]
+	for c in p.ingredients if counting else []:
+		var d: Dictionary = CardData.DEFS.get(c.name, {})
+		if d.get("mithril", false):
+			mithril.append(c.name)
+		if d.has("bonus_success"):
+			flats.append([c.name, int(d.bonus_success)])
+	var from_card := 0  # the Challenge's Successes counted so far
+	var extra := 0      # and Mithril's / flat ones
+	var card_n := 0
 	for j in goods.size():
-		events.append([t + j * MARK_GAP, _mark.bind(goods[j], 1, 1.0 + 0.12 * j)])
-	t += goods.size() * MARK_GAP
+		var i: int = goods[j]
+		if counting and card_marks[i] == 1:
+			card_n += 1
+			from_card = floori(parts[0][1] * card_n / float(card_goods))
+		events.append([t, _mark.bind(i, 1, 1.0 + 0.12 * j, from_card + extra if counting else -1)])
+		t += MARK_GAP
+		if not mithril.is_empty() and vals[i] >= 6:
+			extra += mithril.size()
+			events.append([t, _mithril.bind(i, mithril[0], from_card + extra, 1.06 + 0.12 * j)])
+			t += MITHRIL_GAP
+	for f in flats:
+		extra += f[1]
+		events.append([t, _flat_success.bind(f[0], f[1], from_card + extra)])
+		t += FLAT_GAP
 	if not bads.is_empty():
 		t += 0.2  # a beat before the bad news
 	for j in bads.size():
@@ -2303,7 +2356,7 @@ func _start_reveal(was: Dictionary) -> void:
 	var score := game.outcome_score(game.current, kind)
 	var fx := {}
 	if full:
-		fx = {"from": 0, "style": "pop"}
+		fx = {"from": int(score) if counting else 0, "style": "pop"}  # Sharpness counted up on the way
 		if kind == FoGame.STRENGTH and score < 0:
 			fx.style = "slam"
 		elif kind == FoGame.SHARPNESS and score <= 0:
@@ -2314,6 +2367,8 @@ func _start_reveal(was: Dictionary) -> void:
 		"ctx": _dice_ctx(), "t": 0.0, "tick": 0.0, "end": t, "events": events, "shown": shown,
 		"full": full, "fx": fx, "old_text": "" if full else was.result,
 	}
+	if counting:
+		reveal.count = 0  # the live Successes line (`_render_react`), hidden until the first Success
 	if full:
 		var dice := []
 		for i in n:
@@ -2322,6 +2377,74 @@ func _start_reveal(was: Dictionary) -> void:
 		reveal.phys = {"dice": dice, "t": 0.0, "started": false, "settle": -1.0, "snap": -1.0,
 			"landed": 0, "clack": 0.0, "snapped": false, "armed": not p.is_bot, "hold": -1.0,
 			"power": 1.0, "rattle": 0.0, "hit": false}
+
+
+## The breakdown played one Effect / Modifier at a time, in the order the rules apply them, each
+## across every die it touches at once. Appends [time, Callable] to `events`; returns the end time.
+func _effect_events(all_steps: Array, events: Array, t: float) -> float:
+	# The steps' keys in rules order: every die runs the same sequence, but each skips the ones
+	# that don't touch it, so merge them (a key's place is just after the one before it on its die).
+	var keys := []
+	var per_die := []  # per die: key -> [from, to, step]
+	for steps in all_steps:
+		var seen := {}
+		var mine := {}
+		var prev := -1
+		for k in range(1, steps.size()):
+			var st: Dictionary = steps[k]
+			var base := "%s|%s" % [st.kind, st.src if st.src != "" else st.text.get_slice(" ", 0)]  # Reactions / a penalty
+			var key := "%s|%d" % [base, seen.get(base, 0)]  # two Silver Wires are two steps
+			seen[base] = seen.get(base, 0) + 1
+			mine[key] = [steps[k - 1].value, st.value, st]
+			var at := keys.find(key)
+			if at == -1:
+				at = prev + 1
+				keys.insert(at, key)
+			prev = at
+		per_die.append(mine)
+	for key in keys:
+		var src := ""
+		var kind := ""
+		var longest := 0.0
+		var j := 0
+		for i in per_die.size():
+			if not per_die[i].has(key):
+				continue
+			var e: Array = per_die[i][key]
+			src = e[2].src
+			kind = e[2].kind
+			var at := t + j * 0.04
+			j += 1
+			match kind:
+				"add":
+					var delta: int = e[1] - e[0]
+					var dir := 1 if delta > 0 else -1
+					for u in absi(delta):
+						events.append([at + u * COUNT_TICK, _count_die.bind(i, e[0] + dir * (u + 1), delta, u, src)])
+					longest = maxf(longest, absi(delta) * COUNT_TICK)
+				"swap":
+					events.append([at, _flip.bind(i, e[1], src)])
+				"cap":
+					events.append([at, _cap.bind(i, e[1])])
+				"ignore":
+					events.append([at, _strike.bind(i, true, src)])
+				_:  # the Magic die, as before
+					events.append([at, _step.bind(i, e[1], e[1] - e[0], 1.0)])
+		if src != "":
+			events.append([t - 0.01, _show_ingredient.bind(src)])  # the card rises just before the dice move
+		t += maxf(EFFECT_GAP, longest + 0.15 + j * 0.04)
+	return t
+
+
+## A Sharpness 6 that Mithril scores again.
+func _mithril_six(v: int) -> bool:
+	return game.challenge_kind == FoGame.SHARPNESS and v >= 6 and game.flag_sum(game.current, "mithril") > 0
+
+
+## Sharpness dice Celestial Ore struck out: a result of 3 or 4 that won't count for Successes.
+func _ignored(v: int) -> bool:
+	return game.challenge_kind == FoGame.SHARPNESS and (v == 3 or v == 4) \
+		and game.flag_sum(game.current, "ignore_34") > 0
 
 
 func _dice_ctx() -> String:
@@ -2646,13 +2769,17 @@ func _step(i: int, value: int, delta: int, pitch: float) -> void:
 
 
 ## A die gains its ✓ / × mark: ✓ pops with a chime, × crunches and shakes the tray.
-func _mark(i: int, mark: int, pitch: float) -> void:
+## `count` >= 0: the Successes line reads this many as the ✓ lands (the coin rings with the chime).
+func _mark(i: int, mark: int, pitch: float, count := -1) -> void:
 	reveal.shown[i].mark = mark
+	if count >= 0:
+		_count_to(count, pitch)
 	var old := _die_node(i)
 	if old == null:
 		return
 	var d = game.player().dice[i]
-	var b := FoUI.die_face(reveal.shown[i].value, mark, d.magic, d.carried, _die_size())
+	var b := FoUI.die_face(reveal.shown[i].value, mark, d.magic, d.carried, _die_size(), false, false,
+		reveal.shown[i].get("ignored", false), reveal.shown[i].get("mithril", false))
 	b.disabled = true
 	var parent := old.get_parent()
 	var at := old.get_index()
@@ -2674,6 +2801,228 @@ func _mark(i: int, mark: int, pitch: float) -> void:
 		_shake(dice_tray, 0.6)
 		_play("die_bad", pitch)
 		_haptic(30)
+
+
+## One unit of a +N / -N on a die (`u` counts from 0): the face counts through each value. The
+## first unit floats the ±N and, for an Ingredient, takes the gold outline its card has.
+func _count_die(i: int, value: int, delta: int, u: int, src: String) -> void:
+	reveal.shown[i].value = value
+	var b := _die_node(i)
+	if b == null:
+		return
+	b.text = str(value)
+	if u == 0:
+		_float_text(b, "%+d" % delta, FoUI.GOOD if delta > 0 else FoUI.RED)
+		if src != "":
+			_glow(b, FoUI.GILT, 0.45)
+	if delta > 0:
+		b.scale = Vector2(1.16, 1.16)
+		b.create_tween().tween_property(b, "scale", Vector2.ONE, 0.09).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	elif u == 0:
+		_crunch(b, 0.6)
+	if not _card_sound(src):  # an Ingredient's own sound speaks for its dice
+		var pitch := 1.0 + 0.1 * u if delta > 0 else maxf(0.5, 0.9 - 0.1 * u)
+		_play_spaced("die_step", COUNT_TICK * 0.6, pitch)
+
+
+## An Effect that swaps one face for another (Bronze: 1 -> 2, 6 -> 5): the die turns edge-on
+## and comes back showing the new face.
+func _flip(i: int, value: int, src: String) -> void:
+	reveal.shown[i].value = value
+	var b := _die_node(i)
+	if b == null:
+		return
+	_glow(b, FoUI.GILT, 0.45)
+	var tw := b.create_tween()
+	tw.tween_property(b, "scale:x", 0.0, 0.08).set_ease(Tween.EASE_IN)
+	tw.tween_callback(func(): b.text = str(value))
+	tw.tween_property(b, "scale:x", 1.0, 0.12).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	if not _card_sound(src):
+		_play_spaced("die_step", DIE_STEP_GAP, 1.2)
+
+
+## A Strength penalty's cap (Razorback Turtle): the die is pressed flat under a heavy ink bar.
+func _cap(i: int, value: int) -> void:
+	reveal.shown[i].value = value
+	var b := _die_node(i)
+	if b == null:
+		return
+	b.text = str(value)
+	b.scale = Vector2(1.2, 0.7)
+	b.create_tween().tween_property(b, "scale", Vector2.ONE, 0.4).set_trans(Tween.TRANS_BOUNCE).set_ease(Tween.EASE_OUT)
+	var bar := ColorRect.new()
+	bar.color = FoUI.INK
+	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bar.size = Vector2(b.size.x + 8, maxf(5.0, b.size.y * 0.08))
+	bar.position = Vector2(-4, -b.size.y * 0.5)
+	b.add_child(bar)
+	var tw := bar.create_tween()
+	tw.tween_property(bar, "position:y", -bar.size.y * 0.5, 0.1).set_trans(Tween.TRANS_EXPO).set_ease(Tween.EASE_IN)
+	tw.tween_property(bar, "modulate:a", 0.0, 0.3).set_delay(0.45)
+	tw.tween_callback(bar.queue_free)
+	_float_text(b, "≤%d" % value, FoUI.RED)
+	_play_spaced("die_bad", DIE_CLICK_GAP, 0.8)
+
+
+## Celestial Ore strikes out a 3 or 4 (`on`), stroke by stroke, and the die greys; a Reaction can
+## lift it again (`on` false).
+func _strike(i: int, on: bool, src := "") -> void:
+	reveal.shown[i].ignored = on
+	var b := _die_node(i)
+	if b == null:
+		return
+	if not on:
+		b.self_modulate = Color.WHITE
+		var old := b.get_node_or_null("StrikeX")
+		if old != null:
+			old.queue_free()
+		return
+	if src != "":
+		_glow(b, FoUI.GILT, 0.45)
+	var x := FoUI.strike_die(b, _die_size(), 0.0)
+	var grey := b.self_modulate
+	b.self_modulate = Color.WHITE
+	var tw := b.create_tween().set_parallel()
+	tw.tween_property(x, "progress", 1.0, 0.24)
+	tw.tween_property(b, "self_modulate", grey, 0.3)
+	if not _card_sound(src):
+		_play_spaced("die_step", DIE_STEP_GAP, 0.7)
+
+
+## Mithril scores a 6 again: its card lifts, a silver glint crosses the die, a second ✓ lands
+## beside the first and the Successes line counts on.
+func _mithril(i: int, card: String, count: int, pitch: float) -> void:
+	reveal.shown[i].mithril = true
+	_show_ingredient(card)
+	var b := _die_node(i)
+	if b != null:
+		_glow(b, FoUI.SILVER, 0.5)
+		b.modulate = Color(1.6, 1.6, 1.8)
+		b.create_tween().tween_property(b, "modulate", Color.WHITE, 0.35)
+		var m := FoUI.bonus_mark(b, _die_size())
+		m.pivot_offset = m.size / 2
+		m.scale = Vector2(1.8, 1.8)
+		m.create_tween().tween_property(m, "scale", Vector2.ONE, 0.25).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	_play("die_good", pitch)
+	_count_to(count, pitch)
+
+
+## A flat Success (Lucky Fish Scale): its card lifts and +N rises off it into the Successes line.
+func _flat_success(card: String, n: int, count: int) -> void:
+	_show_ingredient(card)
+	var head = reveal.get("head")
+	var from = _ingredient_node(card)
+	if from == null:
+		from = dice_tray
+	if head == null or not is_instance_valid(head) or from == null or not is_instance_valid(from) \
+			or fx_layer == null or not is_instance_valid(fx_layer):
+		_count_to(count, 1.2)
+		return
+	var l := FoUI.heading("+%d" % n, 40, FoUI.GOOD, false)
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	fx_layer.add_child(l)
+	l.size = l.get_combined_minimum_size()
+	l.pivot_offset = l.size / 2
+	l.global_position = from.get_global_rect().get_center() - l.size / 2
+	var to: Vector2 = head.get_global_rect().get_center() - l.size / 2
+	var tw := l.create_tween()
+	tw.tween_property(l, "global_position", to, 0.45).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	tw.parallel().tween_property(l, "scale", Vector2(0.6, 0.6), 0.45)
+	tw.tween_callback(func():
+		l.queue_free()
+		if not reveal.is_empty():
+			_count_to(count, 1.2))
+
+
+## The current player's mat card for this Ingredient, if it is on screen (not on a hidden phone tab).
+func _ingredient_node(card: String) -> Control:
+	var zone := "p%d" % game.current
+	for id in card_nodes:
+		var e: Array = card_nodes[id]
+		if e[0] == zone and e[2] == card and is_instance_valid(e[1]) and e[1].is_visible_in_tree():
+			return e[1]
+	return null
+
+
+func _card_sound(card: String) -> bool:
+	return card != "" and FoAssets.ingredient_sound_path(card) != ""
+
+
+## An Ingredient takes effect: its card lifts and shakes on the drafter's mat with a gold outline
+## and plays its sound. Off screen (phone, Table tab) a copy stamps down on the dice tray instead.
+func _show_ingredient(card: String) -> void:
+	var now := Time.get_ticks_msec() / 1000.0
+	if _card_sound(card) and now - sfx_last.get("ing:" + card, -1.0) >= 0.2:
+		sfx_last["ing:" + card] = now
+		_play_file(FoAssets.ingredient_sound_path(card), 0.6)
+	var t := _ingredient_node(card)
+	if t != null:
+		t.pivot_offset = Vector2(t.size.x / 2, t.size.y)
+		t.z_index = 2
+		_glow(t, FoUI.GILT, 0.55)
+		var tw := t.create_tween()
+		tw.tween_property(t, "scale", Vector2(1.3, 1.3), 0.09).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		for r in [0.12, -0.1, 0.06, 0.0]:
+			tw.tween_property(t, "rotation", r, 0.05)
+		tw.tween_interval(0.08)
+		tw.tween_property(t, "scale", Vector2.ONE, 0.15).set_ease(Tween.EASE_IN_OUT)
+		tw.tween_callback(func(): t.z_index = 0)
+		return
+	if dice_tray == null or not is_instance_valid(dice_tray) or fx_layer == null or not is_instance_valid(fx_layer):
+		return
+	var tile := FoUI.card_tile(card, "", FoAssets.ingredient_art(data.ingredient(card)), FoUI.MINI, FoUI.GILT)
+	tile.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	fx_layer.add_child(tile)
+	tile.size = tile.get_combined_minimum_size()
+	tile.pivot_offset = tile.size / 2
+	var r := dice_tray.get_global_rect()
+	tile.global_position = Vector2(r.end.x - tile.size.x - 12, r.position.y - tile.size.y * 0.6)
+	tile.scale = Vector2(1.6, 1.6)
+	tile.modulate.a = 0.0
+	var tw := tile.create_tween()
+	tw.tween_property(tile, "modulate:a", 1.0, 0.06)
+	tw.parallel().tween_property(tile, "scale", Vector2.ONE, 0.12).set_trans(Tween.TRANS_EXPO).set_ease(Tween.EASE_IN)
+	tw.tween_callback(func(): _shake(dice_tray, 0.3))
+	tw.tween_property(tile, "modulate:a", 0.0, 0.25).set_delay(0.3)
+	tw.tween_callback(tile.queue_free)
+
+
+## A coloured outline that fades off a control (the gold of an Ingredient taking effect).
+func _glow(n: Control, color: Color, dur: float) -> void:
+	var p := Panel.new()
+	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	p.add_theme_stylebox_override("panel", FoUI.box(Color(0, 0, 0, 0), color, 4, 0))
+	p.set_anchors_preset(Control.PRESET_FULL_RECT)
+	var out := 0 if n.clip_contents else 5  # a card tile clips its children: draw inside its edge
+	for side in ["left", "top"]:
+		p.set("offset_" + side, -out)
+	for side in ["right", "bottom"]:
+		p.set("offset_" + side, out)
+	n.add_child(p)
+	var tw := p.create_tween()
+	tw.tween_property(p, "modulate:a", 0.0, dur * 0.4).set_delay(dur * 0.6)
+	tw.tween_callback(p.queue_free)
+
+
+## The live Successes line steps to `n` as a ✓ lands: a coin per Success gained, pitch rising.
+func _count_to(n: int, pitch: float) -> void:
+	var gained: int = n - int(reveal.count)
+	reveal.count = n
+	reveal.counting = reveal.get("counting", false) or n > 0
+	var head = reveal.get("head")
+	if head == null or not is_instance_valid(head):
+		return
+	if n > 0:  # the first die of a Vampire Bat pair is ✓ but scores nothing yet
+		head.modulate.a = 1.0
+	head.text = FoGame.successes_text(n)
+	if gained <= 0:
+		return
+	head.pivot_offset = Vector2(0, head.size.y / 2)  # left-aligned text: grow from the left, not off the clip
+	head.scale = Vector2(1.15, 1.15)
+	head.create_tween().tween_property(head, "scale", Vector2.ONE, 0.1)
+	_play("tally", pitch)
+	for k in range(1, gained):  # Mithril on a scoring 6: two Successes from one die
+		get_tree().create_timer(0.06 * k).timeout.connect(func(): _play("tally", pitch + 0.1 * k))
 
 
 ## The reverse of a pop: flattened, flushed red, knocked askew, then a heavy bounce back.
@@ -2822,7 +3171,7 @@ func _result_fx(head: Control, fx: Dictionary) -> void:
 	if not _animate():
 		return
 	var tw := head.create_tween()
-	tw.tween_callback(func(): head.pivot_offset = head.size / 2)  # once it has been laid out
+	tw.tween_callback(func(): head.pivot_offset = Vector2(0, head.size.y / 2))  # once laid out; from the left, so it stays in the clip
 	var dur := 0.3
 	if game.challenge_kind == FoGame.SHARPNESS and head is Label:
 		var lab := head as Label

@@ -52,7 +52,7 @@ Targets: Web (primary for playtesting) and iOS. Landscape 1920x1080 base, `canva
   `UMBER` is kept lighter than `INK` so the primary stands out. Result lines: `GOOD` for Successes / no penalty, `RED` for a penalty.
   Card text follows the text size setting (`FoUI.card_text()`): the rules well grows, the art gives way.
   Dice clicks and step pops go through `_play_spaced` (`DIE_CLICK_GAP` / `DIE_STEP_GAP`) so bursts don't turn to noise.
-  Playmat (`FoUI.background(frame_w)` → `FoUI.Playmat`): `assets/images/table/lattice.png` (barley-twist bars, ray-cast at 2x by
+  Playmat (`FoUI.background(frame_w)` → `FoUI.Playmat`): `assets/images/table/lattice.png` (16-bit style stair-stepped diagonals woven into a basket-weave ground, 2x, by
   `godot --headless --script res://tools/make_lattice.gd`) tiled, inside an egg-and-dart nine-slice `frame.svg`
   (regenerate with `python3 tools/make_playmat_frame.py`, imported at 2x). Both have mipmaps and are drawn at half scale. On desktop the lattice and 28 px frame cover only the
   centred table (`_frame_span`) with `INK` bars either side, like the title art; on phone a 14 px frame runs round the screen.
@@ -60,8 +60,14 @@ Targets: Web (primary for playtesting) and iOS. Landscape 1920x1080 base, `canva
   A person's full roll waits in the hand: hold Roll (or Space / Enter) to shake, release to throw, harder
   the longer it was held (`_roll_down` / `_roll_up`); CPUs throw at once. The dice are thrown into a tall tray and bounce off its walls and
   each other (`_tumble`, cosmetic physics in `reveal.phys`), land, snap into a centred row, then
-  breakdown steps with floating ±N → ✓ dice pop (pitch rising) then × dice crunch (pitch falling, tray shakes) → the result
-  line counts up, or a Strength penalty slams down. A Reaction replays only the dice it changed.
+  each Effect / Modifier plays in rules order across every die it touches (`_effect_events`; `die_breakdown` steps carry
+  `kind` + `src`): the Ingredient lifts and shakes on the mat with a gold outline and plays its sound (`_show_ingredient`;
+  on phone, with the mats on another tab, a copy stamps onto the tray), its dice take the outline and count through
+  +N (`_count_die`), flip (Bronze, `_flip`), are capped (`_cap`) or struck out and greyed (Celestial Ore, `_strike`;
+  `FoUI.die_face(ignored)` keeps them so) → ✓ dice pop (pitch rising; on Sharpness the Successes line counts up with
+  them, a coin per Success, `_count_to`; Mithril lifts and adds a second ✓ on each 6; flat Successes like Lucky Fish
+  Scale rise off their card into the line) then × dice crunch (pitch falling, tray shakes) → the line pops, or a
+  Strength penalty slams down. CPUs' rolls show the result line too. A Reaction replays only the dice it changed.
   Quest scored (`_tally_quest`, from the "quest" history entry once the last reveal ends): mats tally lowest
   score first (+N rises off the total, a coin per Success), then the top scorer's mat gets sparks and the anvil;
   the church bell rings as each Quest starts.

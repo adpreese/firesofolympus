@@ -234,6 +234,13 @@ func test_breakdown_steps() -> void:
 	var b := g.die_breakdown(0, die, FoGame.SHARPNESS)
 	eq(b.map(func(x): return x.value), [3, 2, 3, 5, 6, 4], "roll, silver, manticore, leather, reaction, cap")
 	ok(b[-1].text.contains("Razorback Turtle"), "cap names the Challenge")
+	eq(b.map(func(x): return x.kind), ["roll", "add", "add", "add", "add", "cap"], "step kinds")
+	eq(b.map(func(x): return x.src), ["", "Silver Wire", "Manticore Poison", "Leather Grip", "", ""], "the Ingredient behind each")
+	p.ingredients = [_card("Celestial Ore", 4), _card("Bronze", 5)]
+	p.penalty = {}
+	var ore := g.die_breakdown(0, FoGame.Die.new(3), FoGame.SHARPNESS)
+	eq([ore[-1].kind, ore[-1].src], ["ignore", "Celestial Ore"], "Celestial Ore strikes out a 3")
+	eq(g.die_breakdown(0, FoGame.Die.new(6), FoGame.SHARPNESS)[1].src, "Bronze", "Bronze swaps a 6")
 	p.ingredients = [_card("Bronze", 1)]
 	p.penalty = {}
 	eq(g.die_breakdown(0, FoGame.Die.new(4), FoGame.STRENGTH).size(), 1, "nothing changes a plain 4")

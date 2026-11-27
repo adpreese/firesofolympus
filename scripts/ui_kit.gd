@@ -216,7 +216,7 @@ static func background(frame_w := 28.0, frame_span := 0.0) -> Playmat:
 	return r
 
 
-## Both textures are 2x so they stay crisp on high-DPI screens: the barley-twist lattice is rendered
+## Both textures are 2x so they stay crisp on high-DPI screens: the woven lattice is rendered
 ## at 2x (tools/make_lattice.gd) and the frame SVG imported at 2x (svg/scale); the frame is a
 ## nine-slice (tools/make_playmat_frame.py) whose edges repeat whole eggs.
 class Playmat extends Control:
@@ -638,7 +638,10 @@ static func _text_height(font: Font, text: String, size: int, width: float) -> f
 
 ## One die face. mark: 1 = scores / protects (green, thick border), -1 = triggers a penalty (red).
 ## armed: a Reaction is chosen and this die can take it (heavy ink outline, hover lifts).
-static func die_face(value: int, mark: int, magic: bool, carried: bool, size: float, selected := false, armed := false) -> Button:
+## `ignored`: greyed and struck through (Celestial Ore's 3s and 4s). `bonus`: a second, smaller ✓
+## beside the first (Mithril's extra Success on a 6).
+static func die_face(value: int, mark: int, magic: bool, carried: bool, size: float, selected := false, armed := false,
+		ignored := false, bonus := false) -> Button:
 	var b := Button.new()
 	b.text = str(value)
 	b.custom_minimum_size = Vector2(size, size)
@@ -683,7 +686,52 @@ static func die_face(value: int, mark: int, magic: bool, carried: bool, size: fl
 		_die_badge(b, MARK_MAGIC, magic_ink, size, Vector2(0, 1))
 	if carried:
 		_die_badge(b, MARK_KEPT, kept_ink, size, Vector2(1, 1))
+	if bonus:
+		bonus_mark(b, size)
+	if ignored:
+		strike_die(b, size, 1.0)
 	return b
+
+
+## Mithril's second ✓, just left of the first.
+static func bonus_mark(die: Button, size: float) -> Label:
+	_die_badge(die, MARK_GOOD, GOOD, size, Vector2(1, 0))
+	var l: Label = die.get_child(die.get_child_count() - 1)
+	l.add_theme_font_size_override("font_size", maxi(10, int(size * 0.19)))
+	l.position.x -= size * 0.24
+	l.name = "BonusMark"
+	return l
+
+
+## Greys a die and draws an ink X over it; `progress` 0..1 for a stroke-by-stroke draw.
+static func strike_die(die: Button, size: float, progress := 1.0) -> StrikeX:
+	die.self_modulate = Color(0.8, 0.78, 0.75, 0.9)  # greyed, but the value still reads
+	var x := StrikeX.new()
+	x.name = "StrikeX"
+	x.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	x.size = Vector2(size, size)
+	x.progress = progress
+	die.add_child(x)
+	return x
+
+
+## Two ink strokes corner to corner: the first over progress 0..0.5, the second 0.5..1.
+class StrikeX extends Control:
+	var progress := 1.0:
+		set(v):
+			progress = v
+			queue_redraw()
+
+	func _draw() -> void:
+		var inset := size.x * 0.16
+		var w := maxf(2.0, size.x * 0.05)
+		var strokes := [[Vector2(inset, inset), Vector2(size.x - inset, size.y - inset)],
+			[Vector2(size.x - inset, inset), Vector2(inset, size.y - inset)]]
+		for k in 2:
+			var f := clampf(progress * 2.0 - k, 0.0, 1.0)
+			if f > 0.0:
+				var a: Vector2 = strokes[k][0]
+				draw_line(a, a.lerp(strokes[k][1], f), Color(INK, 0.7), w, true)
 
 
 ## A small symbol in a die's corner; corner (0,0) = top-left, (1,1) = bottom-right.
